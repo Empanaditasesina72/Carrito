@@ -87,6 +87,9 @@ def main() -> int:
                     help="force AnalogueGain (low light)")
     ap.add_argument("--fps", type=float, default=None,
                     help="force frame rate; lower it to allow a longer exposure")
+    ap.add_argument("--interval", type=float, default=None,
+                    help="seconds between samples; raise it to watch live while "
+                         "moving a sign in front of the camera")
     args = ap.parse_args()
 
     os.makedirs(args.out, exist_ok=True)
@@ -135,11 +138,13 @@ def main() -> int:
         print("[DIAG] ERROR: no frames from the camera.")
         return 1
 
+    interval = args.interval if args.interval else 1.0 / CAMERA_FPS
     print()
-    print(f"{'#':>3} {'error_px':>9} {'conf':>6} {'left_x':>7} {'right_x':>8}  lines")
-    print("-" * 56)
+    print(f"{'#':>3} {'error_px':>9} {'conf':>6} {'left_x':>7} {'right_x':>8}  "
+          f"{'lines':<11} signs")
+    print("-" * 78)
 
-    results, last = [], None
+    results, last, best = [], None, 0
     for i in range(args.frames):
         frame = camera.get_frame()
         if frame is None:
@@ -156,8 +161,18 @@ def main() -> int:
                  else "NONE")
         lx = f"{r.left_x}" if r.left_x is not None else "-"
         rx = f"{r.right_x}" if r.right_x is not None else "-"
-        print(f"{i:>3} {r.error_px:>+9.1f} {r.confidence:>6.0%} {lx:>7} {rx:>8}  {which}")
-        time.sleep(1.0 / CAMERA_FPS)
+        live = sign_det.get_detections() if hasattr(sign_det, "get_detections") else []
+        if live:
+            best += 1
+            sg = ", ".join(
+                f"{d.label} {d.confidence:.0%}"
+                f"@{d.distance_m * 100:.0f}cm" if d.distance_m else f"{d.label} {d.confidence:.0%}"
+                for d in live[:3])
+        else:
+            sg = "-"
+        print(f"{i:>3} {r.error_px:>+9.1f} {r.confidence:>6.0%} {lx:>7} {rx:>8}  "
+              f"{which:<11} {sg}")
+        time.sleep(interval)
 
     if not results:
         print("[DIAG] ERROR: no frames processed.")
@@ -178,6 +193,7 @@ def main() -> int:
     print(f"  confidence        : mean {confs.mean():.0%}, "
           f"at 100% in {int((confs >= 1.0).sum())}/{len(results)} frames")
     print(f"  both lines found  : {both}/{len(results)} frames")
+    print(f"  frames with signs : {best}/{len(results)}")
     if seps:
         print(f"  line separation   : mean {np.mean(seps):.0f} px "
               f"(pipeline expects 384 px, accepts 230-538)")
