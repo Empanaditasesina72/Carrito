@@ -7,8 +7,8 @@ Design:
   - PARKING_SEARCH: drives slowly along the lane looking for the gap. It is
     detected with the side/front ToF (or by time if there is no sensor).
   - PARKING_MANEUVER: open-loop, time-based manoeuvre (just like the car's
-    real parking): steers right and drives in perpendicular to the bay,
-    then straightens.
+    real parking): steers towards config.py:PARK_SIDE and drives in
+    perpendicular to the bay, then straightens.
   - PARKED: motor at 0, parked.
 
 Guarantees (like the rest of the project):
@@ -23,11 +23,12 @@ from enum import Enum, auto
 
 try:
     from config import (
-        PARK_SEARCH_SPEED, PARK_MANEUVER_SPEED,
+        PARK_SIDE, PARK_SEARCH_SPEED, PARK_MANEUVER_SPEED,
         PARK_REVERSE_LOCK_SEC, PARK_REVERSE_STRAIGHT_SEC,
         SERVO_CENTER_ANGLE, SERVO_MIN_ANGLE, SERVO_MAX_ANGLE,
     )
 except ImportError:
+    PARK_SIDE = "right"
     PARK_SEARCH_SPEED = 15
     PARK_MANEUVER_SPEED = 12
     PARK_REVERSE_LOCK_SEC = 2.5
@@ -63,6 +64,7 @@ class ParkingFSM:
 
     SEARCH_SPEED   = float(PARK_SEARCH_SPEED)
     MANEUVER_SPEED = float(PARK_MANEUVER_SPEED)
+    TURN_IN_ANGLE  = SERVO_MAX_ANGLE if PARK_SIDE == "right" else SERVO_MIN_ANGLE
 
     def __init__(self, motor, steering):
         self.motor = motor
@@ -79,7 +81,7 @@ class ParkingFSM:
         self._t_state = time.monotonic()
         self._man_phase = 0
         self._active = True
-        print("[PARK] Parking ENABLED -> PARKING_SEARCH")
+        print(f"[PARK] Parking ENABLED -> PARKING_SEARCH (bay on the {PARK_SIDE})")
 
     def deactivate(self):
         self._active = False
@@ -127,7 +129,7 @@ class ParkingFSM:
 
     def _do_maneuver(self):
         if self._man_phase == 0:
-            self.steering.set_angle(SERVO_MAX_ANGLE)
+            self.steering.set_angle(self.TURN_IN_ANGLE)
             self.motor.set_speed(self.MANEUVER_SPEED)
             if self._elapsed() >= self.TURN_IN_S:
                 self._man_phase = 1
