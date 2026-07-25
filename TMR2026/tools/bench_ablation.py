@@ -41,12 +41,12 @@ from config import (
     CAMERA_WIDTH, CAMERA_HEIGHT, CAMERA_FPS,
     SERVO_CENTER_ANGLE, SERVO_MIN_ANGLE, SERVO_MAX_ANGLE,
     USE_IMX500_NPU, IMX500_RPK_PATH, IMX500_LABELS_PATH, IMX500_CONF,
-    PID_KP, PID_KI, PID_KD,
 )
 from vision.lane_pipeline import LanePipeline
 from control.pid_controller import PIDController
 
 YOLO_CONF, YOLO_IMGSZ = 0.55, 320
+PID_KP, PID_KI, PID_KD = 0.08, 0.002, 0.025
 
 
 def _temp_c():
