@@ -54,6 +54,18 @@ GENERALIZATION_AUG = dict(
     erasing=0.4, auto_augment="randaugment",
 )
 
+WASHOUT_ROBUST_AUG = dict(
+    GENERALIZATION_AUG,
+    hsv_s=0.9,
+    hsv_v=0.6,
+    scale=0.7,
+)
+
+RECIPES = {
+    "generalization": GENERALIZATION_AUG,
+    "washout": WASHOUT_ROBUST_AUG,
+}
+
 
 def main() -> None:
     ap = argparse.ArgumentParser()
@@ -65,6 +77,9 @@ def main() -> None:
     ap.add_argument("--batch", type=int, default=16)
     ap.add_argument("--device", default="", help="'0' for GPU, 'cpu', '' = auto")
     ap.add_argument("--patience", type=int, default=30)
+    ap.add_argument("--recipe", choices=tuple(RECIPES), default="generalization",
+                    help="augmentation recipe; 'washout' widens saturation and "
+                         "brightness jitter for pale prints and mixed light")
     ap.add_argument("--name", default="train_signs")
     ap.add_argument("--project", default=str(REPO_ROOT / "runs"))
     args = ap.parse_args()
@@ -90,6 +105,13 @@ def main() -> None:
     print(f"[TRAIN] base={base}  data={args.data}  imgsz={args.imgsz}  "
           f"epochs={args.epochs}  device={device}")
     print(f"[TRAIN] flips DISABLED (directional arrow classes)")
+    print(f"[TRAIN] recipe={args.recipe}  "
+          f"hsv_h={RECIPES[args.recipe]['hsv_h']} "
+          f"hsv_s={RECIPES[args.recipe]['hsv_s']} "
+          f"hsv_v={RECIPES[args.recipe]['hsv_v']}")
+    if args.recipe == "washout":
+        print("[TRAIN] hue jitter left narrow ON PURPOSE: red/green/yellow are "
+              "separated by hue alone, widening it would destroy them.")
 
     model = YOLO(base)
     model.train(
@@ -101,7 +123,7 @@ def main() -> None:
         patience=args.patience,
         project=args.project,
         name=args.name,
-        **GENERALIZATION_AUG,
+        **RECIPES[args.recipe],
     )
 
     best = Path(args.project) / args.name / "weights" / "best.pt"
