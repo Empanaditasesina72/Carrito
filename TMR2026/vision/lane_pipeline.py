@@ -3,6 +3,10 @@
 Full pipeline:
   1. ROI: crop the lower half of the frame (ignore sky/upper noise).
   2. Bird's-Eye View: perspective transform to a top-down view.
+  2b. Discard the columns outside the destination rectangle. The homography is
+      only defined between the trapezoid and BEV_DST_RATIO; columns beyond it are
+      lateral extrapolations that sample whatever lies past the track edge, so
+      they are zeroed before the histogram sees them.
   3. Strict HSV filter: isolate white and reject glossy-black reflections.
   4. Morphology: remove speckle noise (specular highlights of black plastic).
   5. Sliding Windows: find left and right lane centres from bottom to top.
@@ -119,6 +123,9 @@ class LanePipeline:
         self._bev_w = frame_w
         self._bev_h = frame_h - self._roi_y
 
+        self._valid_x0 = int(round(self.BEV_DST_RATIO[:, 0].min() * frame_w))
+        self._valid_x1 = int(round(self.BEV_DST_RATIO[:, 0].max() * frame_w))
+
         self._smooth_error = 0.0
         self._prev_conf    = 0.0
 
@@ -152,6 +159,9 @@ class LanePipeline:
 
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN,  self._morph_k)
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, self._morph_k)
+
+        mask[:, :self._valid_x0] = 0
+        mask[:, self._valid_x1:] = 0
 
         result = self._sliding_windows(mask)
 
