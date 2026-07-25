@@ -279,6 +279,33 @@ cycles per configuration at 50 Hz.
 
 ---
 
+### 7.6 🟠 Detector operating range (measured, and it belongs in Limitations)
+
+The detector was trained on a close-up sign dataset, so its usable range on the
+track is bounded by apparent size rather than by confidence tuning. Measured by
+scaling a held-out test image into a 640×480 frame at the deployed imgsz of 320:
+
+| Apparent octagon height | % of frame height | Detected |
+|---|---|---|
+| 150 px | 31.2 % | stop, 88 % |
+| 100 px | 20.8 % | stop, 81 % |
+| 60 px | 12.5 % | stop, 80 % |
+| **35 px** | **7.3 %** | **stop, 71 % — threshold** |
+| 28 px | 5.8 % | no |
+
+Training images place the sign at 27–45 % of frame height; on the track at 1.5 m
+an 8.5 cm octagon subtends 5.8 %, below the threshold. Combined with the pinhole
+model this gives a first-detection distance of **1.19 m** for the deployed sign,
+against a braking onset of 0.70 m — so the sign is acquired 49 cm before braking
+must begin.
+
+> State in Limitations: the sign detector reaches F1 = 0.990 on held-out data but
+> that figure is obtained at the apparent scale of its training set. On the
+> vehicle the usable range is bounded below 1.19 m for an 8.5 cm sign, because the
+> training data contains only close-ups and no track imagery. Enlarging the sign
+> or fine-tuning on track-scale imagery extends the range; the reported
+> detection-range figure should accompany the F1 score rather than be omitted.
+
 ## 8. 🔴 LIMITATIONS (new subsection — do not skip)
 
 > The evaluation is software-in-the-loop plus an on-device latency measurement.
