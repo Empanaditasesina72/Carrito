@@ -48,12 +48,14 @@ try:
     from config import (
         CAMERA_AWB_MODE, CAMERA_CONTRAST, CAMERA_SATURATION,
         CAMERA_SHARPNESS, CAMERA_DENOISE, CAMERA_BUFFERS,
+        CAMERA_EXPOSURE_US, CAMERA_GAIN,
         STOP_SIGN_REAL_HEIGHT_M,
     )
 except ImportError:
-    CAMERA_AWB_MODE, CAMERA_CONTRAST, CAMERA_SATURATION = 4, 1.5, 1.8
+    CAMERA_AWB_MODE, CAMERA_CONTRAST, CAMERA_SATURATION = 4, 1.5, 1.0
     CAMERA_SHARPNESS, CAMERA_DENOISE, CAMERA_BUFFERS = 4.0, 2, 6
-    STOP_SIGN_REAL_HEIGHT_M = 0.04
+    CAMERA_EXPOSURE_US, CAMERA_GAIN = None, None
+    STOP_SIGN_REAL_HEIGHT_M = 0.085
 
 DEFAULT_LABELS = ("green", "left", "red", "right", "stop", "straight", "yellow")
 
@@ -281,6 +283,9 @@ class IMX500CameraStream:
             gain   = meta.get("AnalogueGain")
             cgains = meta.get("ColourGains")
 
+            if CAMERA_EXPOSURE_US is not None: exp  = int(CAMERA_EXPOSURE_US)
+            if CAMERA_GAIN        is not None: gain = float(CAMERA_GAIN)
+
             ctrl: dict = {"AeEnable": False}
             if exp    is not None: ctrl["ExposureTime"] = exp
             if gain   is not None: ctrl["AnalogueGain"] = gain
@@ -289,7 +294,10 @@ class IMX500CameraStream:
                 ctrl["ColourGains"] = tuple(cgains)
 
             self._picam2.set_controls(ctrl)
-            print(f"[NPU] AE/AWB locked - exp={exp} us  gain={gain:.2f}")
+            forced = ""
+            if CAMERA_EXPOSURE_US is not None or CAMERA_GAIN is not None:
+                forced = "  (forced by config)"
+            print(f"[NPU] AE/AWB locked - exp={exp} us  gain={gain:.2f}{forced}")
         except Exception as e:
             print(f"[NPU] Could not lock AE/AWB: {e}")
 

@@ -81,6 +81,12 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--frames", type=int, default=20)
     ap.add_argument("--out", default="/tmp/diag")
+    ap.add_argument("--exposure", type=int, default=None,
+                    help="force ExposureTime in us (low light)")
+    ap.add_argument("--gain", type=float, default=None,
+                    help="force AnalogueGain (low light)")
+    ap.add_argument("--fps", type=float, default=None,
+                    help="force frame rate; lower it to allow a longer exposure")
     args = ap.parse_args()
 
     os.makedirs(args.out, exist_ok=True)
@@ -102,6 +108,25 @@ def main() -> int:
         sign_det.start()
 
     import time
+    if args.exposure or args.gain or args.fps:
+        picam2 = getattr(camera, "_picam2", None)
+        if picam2 is None:
+            print("[DIAG] Cannot reach the camera handle; overrides ignored.")
+        else:
+            ctrl: dict = {"AeEnable": False}
+            if args.fps:
+                dur = int(1e6 / args.fps)
+                ctrl["FrameDurationLimits"] = (dur, dur)
+            if args.exposure:
+                ctrl["ExposureTime"] = args.exposure
+            if args.gain:
+                ctrl["AnalogueGain"] = args.gain
+            picam2.set_controls(ctrl)
+            time.sleep(1.5)
+            m = picam2.capture_metadata()
+            print(f"[DIAG] Overrides applied: exp={m.get('ExposureTime')} us  "
+                  f"gain={m.get('AnalogueGain'):.1f}")
+
     t0 = time.monotonic()
     while camera.get_frame() is None and time.monotonic() - t0 < 10:
         time.sleep(0.05)
