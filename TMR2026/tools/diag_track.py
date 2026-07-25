@@ -183,8 +183,27 @@ def main() -> int:
               f"(pipeline expects 384 px, accepts 230-538)")
         if not (230 <= np.mean(seps) <= 538):
             print("  => OUT OF BAND: the pipeline will drop to single-line mode.")
+    fill = None
+    if last is not None and last[1].mask_frame is not None:
+        mk = last[1].mask_frame
+        mk = mk[:, :, 0] if mk.ndim == 3 else mk
+        fill = float((mk > 0).mean())
+        print(f"  white mask fill   : {fill:.1%} of the bird's-eye view")
+
     print()
-    if confs.mean() >= 0.9 and errs.std() < 40:
+    degenerate = fill is not None and not (0.005 <= fill <= 0.35)
+    if degenerate:
+        print("  VERDICT: DEGENERATE MASK -- the confidence above is not")
+        print("  trustworthy. A usable lane mask covers roughly 1-15 % of the")
+        if fill > 0.35:
+            print("  view. Here almost everything passes the filter, so the")
+            print("  sliding windows locked onto arbitrary bright edges (floor,")
+            print("  furniture), not the lane lines. Reduce exposure/gain or")
+            print("  tighten S_max; if the illuminant is coloured, no threshold")
+            print("  will separate white lines from a bright floor.")
+        else:
+            print("  view. Here almost nothing passes: too dark, or V_min too high.")
+    elif confs.mean() >= 0.9 and errs.std() < 40:
         print("  VERDICT: stable lock. Good enough to drive.")
     elif confs.mean() >= 0.5:
         print("  VERDICT: partial lock. Tune HSV V_min and re-run.")
