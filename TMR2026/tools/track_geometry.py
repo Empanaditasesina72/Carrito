@@ -55,6 +55,21 @@ def half_width_at(distance_m: float, hfov_deg: float) -> float:
     return distance_m * math.tan(math.radians(hfov_deg / 2.0))
 
 
+def image_row(distance_m: float, height_m: float) -> float:
+    """Image row where a point at (distance, height above ground) projects."""
+    below_horizon = math.atan((CAMERA_HEIGHT_M - height_m) / distance_m)
+    below_axis = below_horizon - math.radians(CAMERA_TILT_DEG)
+    return CAMERA_HEIGHT / 2.0 + CAMERA_FOCAL_LENGTH_PX * math.tan(below_axis)
+
+
+def sign_exit_distance() -> float:
+    """Closest distance at which the octagon is still fully inside the frame."""
+    foot = STOP_SIGN_TOTAL_HEIGHT_M - STOP_SIGN_REAL_HEIGHT_M
+    limit = math.radians(CAMERA_TILT_DEG) + math.atan(
+        (CAMERA_HEIGHT / 2.0) / CAMERA_FOCAL_LENGTH_PX)
+    return (CAMERA_HEIGHT_M - foot) / math.tan(limit)
+
+
 def main() -> int:
     vfov = 2.0 * math.degrees(math.atan(CAMERA_HEIGHT / 2.0 / CAMERA_FOCAL_LENGTH_PX))
     hfov = 2.0 * math.degrees(math.atan(CAMERA_WIDTH / 2.0 / CAMERA_FOCAL_LENGTH_PX))
@@ -138,17 +153,37 @@ def main() -> int:
     print(f"  placed at         : {ROAD_STOP_SIGN_AT_M * 100:.0f} cm from the start")
     print(f"  runway before it  : {ROAD_STOP_SIGN_AT_M * 100:.0f} cm "
           f"({(ROAD_STOP_SIGN_AT_M / CAR_LENGTH):.1f} car lengths)")
+    foot = STOP_SIGN_TOTAL_HEIGHT_M - STOP_SIGN_REAL_HEIGHT_M
     print()
-    print("  distance -> apparent octagon height:")
+    print("  distance -> apparent height and where it lands in the frame")
+    print("  (octagon spans rows top..bottom; frame is 0.."
+          f"{CAMERA_HEIGHT})")
     for d_mm in (1500, 1000, STOP_BRAKE_START_MM, 500, STOP_TARGET_MM):
         d_m = d_mm / 1000.0
         h_px = CAMERA_FOCAL_LENGTH_PX * STOP_SIGN_REAL_HEIGHT_M / d_m
+        r_top = image_row(d_m, STOP_SIGN_TOTAL_HEIGHT_M)
+        r_bot = image_row(d_m, foot)
+        inside = 0.0 <= r_top and r_bot <= CAMERA_HEIGHT
         tag = ""
         if d_mm == STOP_BRAKE_START_MM:
             tag = "  <- braking starts"
         elif d_mm == STOP_TARGET_MM:
             tag = "  <- target stop"
-        print(f"    {d_mm:>5} mm   {h_px:6.1f} px{tag}")
+        print(f"    {d_mm:>5} mm   {h_px:6.1f} px   rows {r_top:5.0f}..{r_bot:5.0f}"
+              f"   {'in frame' if inside else 'CLIPPED'}{tag}")
+
+    d_exit = sign_exit_distance()
+    print()
+    print(f"  The octagon leaves the bottom of the frame below "
+          f"{d_exit * 1000:.0f} mm.")
+    if d_exit < STOP_TARGET_MM / 1000.0:
+        print(f"  => OK: the car stops at {STOP_TARGET_MM} mm, "
+              f"{STOP_TARGET_MM - d_exit * 1000:.0f} mm of margin. The detector")
+        print(f"     keeps the sign in view for the whole braking phase.")
+    else:
+        print(f"  => PROBLEM: the sign is lost before reaching the "
+              f"{STOP_TARGET_MM} mm setpoint;")
+        print(f"     raise the sign or the camera, or increase STOP_TARGET_MM.")
 
     print()
     print("=" * 66)
