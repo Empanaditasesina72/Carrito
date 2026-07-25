@@ -308,6 +308,24 @@ must begin.
 
 ## 8. 🔴 LIMITATIONS (new subsection — do not skip)
 
+**🔴 State this explicitly — a reviewer who reads the code will find it.**
+
+In the simulator the STOP sign is a plain coloured cube: `SceneBuilder.CreateSign`
+is called with an empty texture name, so it falls back to a solid `#C8202A` face
+with no octagonal outline and no lettering. Measured, that face is H=178, S=214,
+V=200 — 84 % saturation. The neural detector does **not** fire on it at all;
+detection in simulation came from the HSV red-blob fallback in
+`sign_detector.py`, which accepts H 165–179 at S ≥ 100.
+
+The consequence for the claim: the SIL runs validated the **control** stack — the
+state machine, the PID braking profile, the non-blocking wait, the timing budget
+— but they did **not** exercise the neural sign-detection path. On the physical
+track both paths fail on the printed sign: the detector reaches 0.44 against a
+0.55 threshold, and the printed red measures S = 42 against the fallback's
+required 100. Saturating the printed red recovers both (0.66 for the detector,
+and the blob filter fires), which is a perception-domain gap invisible in
+simulation.
+
 > The evaluation is software-in-the-loop plus an on-device latency measurement.
 > We do not claim validated physical trajectory transfer: closed-loop lane
 > following and the parking manoeuvre were exercised in simulation, and the
