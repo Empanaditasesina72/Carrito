@@ -90,6 +90,28 @@ class MotorDriver:
             self._current = 0.0
         self._apply_hw(0.0)
 
+    def kick(self, duty: float, seconds: float = 0.25) -> None:
+        """
+        Break static friction with a brief high-duty pulse, bypassing the ramp.
+
+        A loaded vehicle at a low cruise duty can stall on start: the PWM is
+        applied, the motor hums, and the wheels never turn, because the duty
+        that sustains motion is well below the one needed to start it. This
+        forces the duty for a moment so the car is already rolling when normal
+        control takes over -- rolling friction is far lower than the static
+        friction that blocked it, so the low cruise duty is enough to keep it
+        going even though it could not start it.
+
+        Blocks for `seconds`. Leaves the target where the pulse put it; the
+        next set_speed() or brake() takes over from there.
+        """
+        duty = max(-self.MAX_DUTY, min(self.MAX_DUTY, float(duty)))
+        with self._lock:
+            self._target  = duty
+            self._current = duty
+        self._apply_hw(duty)
+        time.sleep(max(0.0, float(seconds)))
+
     @property
     def current_duty(self) -> float:
         """Current duty cycle (the one being applied to the H-bridge)."""

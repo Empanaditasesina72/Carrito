@@ -89,9 +89,12 @@ def _build_vision():
     return cam, sign
 
 
-def run_trial(fsm, camera, sign_det, sensor, cruise_pwm, max_drive_s) -> dict:
+def run_trial(fsm, camera, sign_det, sensor, cruise_pwm, max_drive_s,
+              kick_pwm=0.0, kick_s=0.25) -> dict:
     fsm.MAX_AUTO_PWM = float(cruise_pwm)      # cap cruise speed for safety
     fsm.PRECAUCION_PWM = min(fsm.PRECAUCION_PWM, cruise_pwm * 0.6)
+    if kick_pwm > 0:
+        fsm.motor.kick(kick_pwm, kick_s)
     fsm.activate()
 
     t0 = time.monotonic()
@@ -189,6 +192,11 @@ def main() -> int:
                     help="no ToF: brake on the camera, measure with a tape")
     ap.add_argument("--max-drive", type=float, default=3.0,
                     help="seconds the car may move before being braked anyway")
+    ap.add_argument("--kick", type=float, default=0.0,
+                    help="breakaway pulse %% PWM before each trial, for a loaded "
+                         "car that stalls at the cruise duty (try 60)")
+    ap.add_argument("--kick-ms", type=float, default=250.0,
+                    help="how long the breakaway pulse lasts")
     ap.add_argument("--no-prompt", action="store_true",
                     help="never wait on stdin: run the trials back to back and "
                          "leave stopped_mm blank for an operator to fill in. Lets "
@@ -233,7 +241,8 @@ def main() -> int:
             else:
                 input(f"\n[Trial {k}/{args.trials}] Place car at the start line, "
                       f"press Enter (Ctrl+C to stop)...")
-            r = run_trial(fsm, camera, sign_det, sensor, args.cruise, args.max_drive)
+            r = run_trial(fsm, camera, sign_det, sensor, args.cruise,
+                          args.max_drive, args.kick, args.kick_ms / 1000.0)
             r["trial"] = k
             if sensor is None and not args.no_prompt:
                 print(f"  -> the car stopped ({r['stop_reason']}, "
