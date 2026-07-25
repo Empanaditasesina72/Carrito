@@ -189,6 +189,10 @@ def main() -> int:
                     help="no ToF: brake on the camera, measure with a tape")
     ap.add_argument("--max-drive", type=float, default=3.0,
                     help="seconds the car may move before being braked anyway")
+    ap.add_argument("--no-prompt", action="store_true",
+                    help="never wait on stdin: run the trials back to back and "
+                         "leave stopped_mm blank for an operator to fill in. Lets "
+                         "the run be triggered over SSH.")
     ap.add_argument("--out", default=str(ROOT / "validation_results" / "braking_physical.csv"))
     args = ap.parse_args()
 
@@ -223,11 +227,15 @@ def main() -> int:
     results = []
     try:
         for k in range(1, args.trials + 1):
-            input(f"\n[Trial {k}/{args.trials}] Place car at the start line, "
-                  f"press Enter (Ctrl+C to stop)...")
+            if args.no_prompt:
+                print(f"\n[Trial {k}/{args.trials}] starting in 3 s - stand clear")
+                time.sleep(3.0)
+            else:
+                input(f"\n[Trial {k}/{args.trials}] Place car at the start line, "
+                      f"press Enter (Ctrl+C to stop)...")
             r = run_trial(fsm, camera, sign_det, sensor, args.cruise, args.max_drive)
             r["trial"] = k
-            if sensor is None:
+            if sensor is None and not args.no_prompt:
                 print(f"  -> the car stopped ({r['stop_reason']}, "
                       f"{r['duration_s']} s). Now measure it.")
                 m = ask_measured_mm(k)
