@@ -195,10 +195,27 @@ def main() -> int:
     print(f"  wheelbase         : {WHEELBASE * 100:.1f} cm")
     print(f"  wheel track       : {TRACK_WIDTH * 100:.1f} cm")
     print(f"  body              : {CAR_LENGTH * 100:.1f} x {CAR_WIDTH * 100:.1f} cm")
-    print(f"  max wheel angle   : {MAX_STEERING_ANGLE_DEG:.1f} deg")
+    r_servo = WHEELBASE / math.tan(math.radians(servo_span))
+    print(f"  max wheel angle   : {MAX_STEERING_ANGLE_DEG:.1f} deg "
+          f"(MAX_STEERING_ANGLE_DEG)")
     print(f"  min turn radius   : {r_min:.3f} m  (centreline)")
     print(f"  servo authority   : {SERVO_MIN_ANGLE:.0f}-{SERVO_MAX_ANGLE:.0f} deg "
           f"= +/-{servo_span:.0f} deg about {SERVO_CENTER_ANGLE:.0f}")
+    print(f"  radius at +/-{servo_span:.0f} deg : {r_servo:.3f} m")
+    if abs(servo_span - MAX_STEERING_ANGLE_DEG) > 1.0:
+        print(f"  => NOTE: the servo reaches {servo_span:.0f} deg but "
+              f"MAX_STEERING_ANGLE_DEG says {MAX_STEERING_ANGLE_DEG:.0f} deg.")
+        print(f"     Unless the linkage geometrically amplifies servo travel, the")
+        print(f"     achievable radius is {r_servo:.3f} m, not {r_min:.3f} m. State")
+        print(f"     the measured wheel angle at full servo lock in the paper.")
+
+    if CAR_LENGTH < WHEELBASE:
+        print()
+        print(f"  => INCONSISTENT: wheelbase {WHEELBASE * 100:.1f} cm exceeds "
+              f"CAR_LENGTH {CAR_LENGTH * 100:.1f} cm.")
+        print(f"     Axle-to-axle cannot be longer than the vehicle. Either")
+        print(f"     CAR_LENGTH is the chassis only (wheels overhang it), or one")
+        print(f"     of the two was mismeasured. Re-check before publishing.")
     print()
     print(f"  Lane width is {LANE_WIDTH_M * 100:.1f} cm and the minimum radius is "
           f"{r_min * 100:.0f} cm,")

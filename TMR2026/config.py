@@ -67,7 +67,7 @@ CLASSES_OF_INTEREST = {
     "car"          : "AUTO",
 }
 
-WHEELBASE    = 0.258
+WHEELBASE    = 0.310
 TRACK_WIDTH  = 0.172
 CAR_LENGTH   = 0.280
 CAR_WIDTH    = 0.190
