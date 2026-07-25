@@ -229,7 +229,45 @@ Geometric soundness of the experiment (from `tools/track_geometry.py`): the
 270 mm setpoint, and remains fully inside the frame down to 178 mm, so the
 detector never loses the sign during braking.
 
-### 7.4 🟠 Perception metrics
+### 7.4 🔴 CPU-vs-NPU ablation (all three reviewers asked for this)
+
+Measured 2026-07-25 on the vehicle with `tools/bench_ablation.py`, 599 control
+cycles per configuration at 50 Hz.
+
+| Metric | IMX500 NPU (on-sensor) | CPU detector thread |
+|---|---|---|
+| Loop latency, mean | **3.75 ms** | 5.45 ms (+45 %) |
+| Jitter (std) | **0.39 ms** | 0.61 ms (+56 %) |
+| p95 / p99 | **4.22 / 6.02 ms** | 6.51 / 8.16 ms |
+| Maximum | **6.17 ms** | 9.30 ms |
+| Deadline misses (20 ms) | 0 | 0 |
+| In-loop sign-gating cost | 0.013 ms | 0.018 ms |
+| **CPU utilisation** | **19.4 %** | **51.0 %** (2.6×) |
+| **Temperature rise** | **+1.1 °C** | **+5.5 °C** (5×) |
+| Per-inference cost | 0.019 ms of CPU | **81.3 ms** |
+| Achievable detection rate | camera rate, 30 fps | **12.3 detections/s** |
+
+> **Both configurations met the 20 ms deadline**, because the architecture already
+> runs the detector in its own thread and the control loop only reads the latest
+> result — the in-loop gating cost is 0.013 ms against 0.018 ms, effectively
+> identical. The difference is not whether the loop meets its deadline but what
+> it costs to do so. Moving inference into the sensor cuts CPU utilisation from
+> 51.0 % to 19.4 %, reduces the thermal rise over the same run by a factor of
+> five, lowers loop jitter by 36 %, and raises the achievable detection rate from
+> 12.3 to 30 per second, so every camera frame is inspected instead of roughly
+> two in five. On a passively cooled platform that also runs the lane pipeline,
+> the state machine, the distance sensors and the lighting, that reclaimed
+> headroom is what makes the design viable, and it is what leaves room for a
+> learned steering model on the CPU.
+
+> **Caveat, state it explicitly.** The 81.3 ms figure is the PyTorch checkpoint.
+> The NCNN export, which the vehicle prefers when available, could not be timed
+> because the `ncnn` runtime is not installed on this Pi; the repository reports
+> it as 3–4× faster, which would place it at roughly 20–27 ms — still at or above
+> the entire control-cycle budget. Report 81.3 ms as measured and the NCNN figure
+> as an estimate, or install `ncnn` and measure it.
+
+### 7.5 🟠 Perception metrics
 
 | Split | mAP@50 | mAP@50-95 | Precision | Recall | F1 |
 |---|---|---|---|---|---|

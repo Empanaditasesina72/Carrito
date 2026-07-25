@@ -1,0 +1,43 @@
+CPU vs NPU ablation -- measured 2026-07-25, Raspberry Pi 5 + Sony IMX500
+Tool: tools/bench_ablation.py   599 control cycles per configuration at 50 Hz
+
+PER-INFERENCE (tools/bench_ablation.py --backend cpu-inference, 60 inferences)
+  model                 weights/tmr_signs.pt (PyTorch), imgsz 320, conf 0.55
+  mean / median         81.32 / 81.25 ms
+  p95 / max             82.04 / 82.27 ms
+  achievable rate       12.3 detections/s
+  vs 20 ms budget       4.1x the entire control cycle
+  CPU busy              55.6 % of all cores
+  NOTE                  the NCNN export could not be timed (ncnn runtime not
+                        installed). Repo reports NCNN as 3-4x faster, i.e.
+                        ~20-27 ms, still at or above the full cycle budget.
+
+CONTROL LOOP -- IMX500 NPU (on-sensor inference)
+  cycles                599
+  latency mean/median   3.75 / 3.69 ms
+  jitter (std)          0.39 ms
+  p95 / p99             4.22 / 6.02 ms
+  max                   6.17 ms
+  under 20 ms           100.00 %  (0 misses)
+  in-loop sign gating   0.013 ms
+  CPU busy              19.4 % of all cores
+  temperature           43.3 -> 44.4 C  (+1.1)
+
+CONTROL LOOP -- CPU detector thread
+  cycles                599
+  latency mean/median   5.45 / 5.32 ms
+  jitter (std)          0.61 ms
+  p95 / p99             6.51 / 8.16 ms
+  max                   9.30 ms
+  under 20 ms           100.00 %  (0 misses)
+  in-loop sign gating   0.018 ms
+  CPU busy              51.0 % of all cores
+  temperature           46.1 -> 51.6 C  (+5.5)
+
+READING OF THE RESULT
+  Both configurations met the deadline: the detector already runs in its own
+  thread and the loop reads only the latest result, so the in-loop cost is
+  effectively identical (0.013 vs 0.018 ms). The difference is the cost of
+  meeting it -- CPU 51.0 % -> 19.4 %, thermal rise 5x lower, jitter 36 % lower,
+  and detection rate 12.3/s -> 30/s so every frame is inspected rather than
+  about two in five.
