@@ -131,6 +131,17 @@ LANE_LOST_THRESHOLD_PX = 280
 
 LANE_MIN_CONFIDENCE = 0.20
 
+# Standing lateral bias of the lane pipeline, in BEV pixels, subtracted from the
+# raw error so that a car centred in its lane reads ~0. This is a MECHANICAL
+# calibration: the camera is not exactly on the chassis centreline and the BEV
+# trapezoid is not perfectly symmetric about the lens axis. At
+# BEV_SCALE_PX_PER_CM = 6.8 px/cm, every 68 px is 10 cm the follower would
+# otherwise hold off-centre on purpose.
+# Re-measure after remounting the camera: centre the car in the lane by hand, run
+#   python tools/diag_track.py --frames 12
+# and put the reported mean error_px here. Positive means the pipeline reads high.
+LANE_ERROR_OFFSET_PX = 0.0
+
 STOP_BRAKE_START_MM  = 700
 STOP_TARGET_MM       = 270
 STOP_TOLERANCE_MM    = 30

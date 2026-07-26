@@ -189,6 +189,11 @@ class VehicleSimulator:
             roi_frac=0.30,
             hsv_white_lo=[0, 0, 200],
             hsv_white_hi=[179, 40, 255],
+            # The simulator's camera is exactly on the vehicle centreline, so it
+            # has none of the physical car's mechanical bias. Pinning 0 keeps
+            # config's LANE_ERROR_OFFSET_PX -- a measurement of THIS chassis --
+            # from leaking into the sim and breaking Sim2Real parity.
+            error_offset_px=0.0,
         )
         if USE_DRIVE_NET:
             from pathlib import Path as _Path
@@ -480,7 +485,7 @@ class VehicleSimulator:
         sign_txt = ", ".join(f"{d.label}({d.confidence:.0%})" for d in dets) or "-"
         lidar_txt = f"{self.sensor.front_mm:.0f}" if self.sensor.front_mm else "---"
         angle_target = max(
-            SERVO_MIN, min(SERVO_MAX, SERVO_CENTER + self.pid.last_output)
+            SERVO_MIN, min(SERVO_MAX, SERVO_CENTER - self.pid.last_output)
         )
         print(f"\r[VIS] err:{self._last_lane.error_px:+.0f}px "
               f"conf:{self._last_lane.confidence:.0%}  "
@@ -522,7 +527,7 @@ class VehicleSimulator:
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
 
         angle_target = max(
-            SERVO_MIN, min(SERVO_MAX, SERVO_CENTER + self.pid.last_output)
+            SERVO_MIN, min(SERVO_MAX, SERVO_CENTER - self.pid.last_output)
         )
 
         self._draw_panel(big, x=10, y=mh + 12, w=440, h=210, lines=[

@@ -35,6 +35,11 @@ try:
 except ImportError:
     LANE_WIDTH_M = 0.54
 
+try:
+    from config import LANE_ERROR_OFFSET_PX as _CFG_LANE_ERROR_OFFSET_PX
+except ImportError:
+    _CFG_LANE_ERROR_OFFSET_PX = 0.0
+
 
 @dataclass
 class LaneResult:
@@ -100,11 +105,19 @@ class LanePipeline:
         bev_src_ratio=None,
         hsv_white_lo=None,
         hsv_white_hi=None,
+        error_offset_px=None,
     ):
         self._w     = frame_w
         self._h     = frame_h
         self._debug = debug
         self._right_bias = max(0.0, min(1.0, float(right_bias)))
+
+        # Standing lateral bias to subtract from the raw error, in BEV pixels.
+        # Defaults to config's LANE_ERROR_OFFSET_PX; pass explicitly to override
+        # per instance (the simulator has no mechanical offset, so it uses 0).
+        self.error_offset_px = (float(error_offset_px)
+                                if error_offset_px is not None
+                                else float(_CFG_LANE_ERROR_OFFSET_PX))
 
         if bev_src_ratio is not None:
             self.BEV_SRC_RATIO = np.float32(bev_src_ratio)
@@ -191,6 +204,18 @@ class LanePipeline:
         mask[:, self._valid_x1:] = 0
 
         result = self._sliding_windows(mask)
+
+        # Zero out the standing bias before any smoothing, so the EMA, the
+        # jump-rejection threshold and every consumer all see the corrected
+        # value. Measured 2026-07-26: with the car deliberately centred in its
+        # lane the raw error read a stable +50 px, which at BEV_SCALE_PX_PER_CM
+        # (6.8 px/cm) is 7 cm of offset the lane follower would have held on
+        # purpose. The cause is mechanical, not algorithmic -- the camera is not
+        # perfectly on the chassis centreline and the BEV trapezoid is not exactly
+        # symmetric about the lens axis -- so it belongs in a calibration constant
+        # rather than in the geometry. Re-measure with tools/diag_track.py whenever
+        # the camera is remounted.
+        result.error_px -= self.error_offset_px
 
         now = time.monotonic()
         CONF_OK = 0.9

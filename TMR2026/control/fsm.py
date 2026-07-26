@@ -247,7 +247,26 @@ class AutonomousFSM:
         else:
             correction = 0.0
 
-        angle = self.SERVO_CENTER + correction
+        # MINUS, not plus. PIDController computes `setpoint - measurement`, so
+        # handing it the lane error already negates it: a positive lane_error
+        # comes back as a negative correction. Adding that to SERVO_CENTER
+        # steered the car the WRONG WAY and the two negations have to cancel.
+        #
+        # The geometry, measured on the car 2026-07-26:
+        #   lane_pipeline sets error_px = lane_cx - frame_cx, so error > 0 means
+        #   the lane centre appears RIGHT of the image centre, which means the car
+        #   sits LEFT of the lane -- and it must steer RIGHT to recover. Steering
+        #   right is a logical angle above SERVO_CENTER (90 = straight, <90 = left,
+        #   >90 = right; confirmed physically -- logical 58 turns the wheels left --
+        #   and independently by _apply_lights below, which lights LEFT when
+        #   current_angle - SERVO_CENTER is negative).
+        #
+        # With `+` a car displaced left was commanded further left, so the first
+        # correction drove it out of the lane instead of back into it.
+        # SteeringDriver.steer_from_error() has always carried the right
+        # convention (angle = centre + kp * error) but nothing calls it, which is
+        # why the contradiction sat here unnoticed.
+        angle = self.SERVO_CENTER - correction
         angle = max(self.SERVO_MIN, min(self.SERVO_MAX, angle))
         self.steering.set_angle(angle)
 

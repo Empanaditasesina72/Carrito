@@ -722,7 +722,7 @@ class VehicleTMR:
         sign_txt = ", ".join(f"{d.label}({d.confidence:.0%})" for d in dets) or "-"
         lidar_txt = f"{self.sensor.front_mm:.0f}" if self.sensor.front_mm else "---"
         angle_target = max(
-            SERVO_MIN, min(SERVO_MAX, SERVO_CENTER + self.pid.last_output)
+            SERVO_MIN, min(SERVO_MAX, SERVO_CENTER - self.pid.last_output)
         )
         print(f"\r[VIS] err:{self._last_lane.error_px:+.0f}px "
               f"conf:{self._last_lane.confidence:.0%}  "
@@ -764,7 +764,7 @@ class VehicleTMR:
                         cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
 
         angle_target = max(
-            SERVO_MIN, min(SERVO_MAX, SERVO_CENTER + self.pid.last_output)
+            SERVO_MIN, min(SERVO_MAX, SERVO_CENTER - self.pid.last_output)
         )
 
         self._draw_panel(vis, x=8, y=200, w=320, h=160, lines=[
