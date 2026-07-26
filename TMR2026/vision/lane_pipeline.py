@@ -87,6 +87,14 @@ class LanePipeline:
     HSV_WHITE_LO = np.array([  0,  0, 130])
     HSV_WHITE_HI = np.array([179, 60, 255])
 
+    # Adaptive V_min, from the view's own histogram. See _white_bounds(). The
+    # fixed HSV_WHITE_LO above stays the fallback floor for the no-contrast case.
+    ADAPTIVE_WHITE = True
+    V_ADAPT_PCTL   = 94.0    # lines cover only a few percent of the bird's-eye view
+    V_ADAPT_FLOOR  = 55.0    # never threshold below this, however dark the frame
+    V_ADAPT_CEIL   = 210.0   # nor above it, however blown out
+    MIN_CONTRAST   = 25.0    # percentile must beat the median by this to be lines
+
     N_WINDOWS  = 9
     WIN_MARGIN = 70
     MIN_PIX    = 60
@@ -175,6 +183,50 @@ class LanePipeline:
         self.MAX_ERR_JUMP_PX  = 90.0
 
         self._morph_k = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+        self.last_v_min = int(self.HSV_WHITE_LO[2])
+
+
+    def _white_bounds(self, hsv: np.ndarray):
+        """Pick V_min from the view's own histogram instead of a fixed number.
+
+        A fixed V_min cannot survive changing light, and the sign detector wants
+        the exposure pinned (it needs correct absolute colour -- an overexposed red
+        octagon clips to white and becomes invisible), so the lane cannot be fixed
+        by opening the aperture. Measured the same afternoon on this track with
+        exposure pinned at gain 4.0:
+
+            14:00  lines at V=255, mask fill 9.1 %, confidence 100 %
+            15:00  light dropped, mask fill 0.0 %, DEGENERATE, confidence 0 %
+
+        The lines never stopped being the brightest thing on a dark plastic track,
+        they just stopped clearing 130. So threshold on that relation instead: take
+        a high percentile of V, which is where the lines live because they cover
+        only a few percent of the view.
+
+        Guards, both necessary:
+          - the percentile must sit MIN_CONTRAST above the median, otherwise there
+            is nothing line-like in view and a percentile would happily threshold
+            noise into a plausible-looking mask. Failing that, fall back to the
+            fixed floor so the mask comes out empty and the degenerate-mask check
+            in tools/diag_track.py can still fire. An always-8 %-fill mask would
+            defeat that check, which is the trap this guard exists to avoid.
+          - the result is clamped to [V_ADAPT_FLOOR, V_ADAPT_CEIL] so a blown-out
+            frame cannot drive the threshold to 255, nor a dark one to 0.
+        """
+        if not self.ADAPTIVE_WHITE:
+            return self.HSV_WHITE_LO, self.HSV_WHITE_HI
+
+        v = hsv[..., 2]
+        med  = float(np.median(v))
+        high = float(np.percentile(v, self.V_ADAPT_PCTL))
+
+        if high - med < self.MIN_CONTRAST:
+            return self.HSV_WHITE_LO, self.HSV_WHITE_HI
+
+        v_min = float(np.clip(0.80 * high + 0.20 * med,
+                              self.V_ADAPT_FLOOR, self.V_ADAPT_CEIL))
+        lo = np.array([self.HSV_WHITE_LO[0], self.HSV_WHITE_LO[1], int(v_min)])
+        return lo, self.HSV_WHITE_HI
 
 
     def process(self, frame: np.ndarray) -> LaneResult:
@@ -195,7 +247,9 @@ class LanePipeline:
         bev = cv2.warpPerspective(roi, self._M, (self._bev_w, self._bev_h))
 
         hsv  = cv2.cvtColor(bev, cv2.COLOR_BGR2HSV)
-        mask = cv2.inRange(hsv, self.HSV_WHITE_LO, self.HSV_WHITE_HI)
+        lo, hi = self._white_bounds(hsv)
+        self.last_v_min = int(lo[2])
+        mask = cv2.inRange(hsv, lo, hi)
 
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN,  self._morph_k)
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, self._morph_k)
