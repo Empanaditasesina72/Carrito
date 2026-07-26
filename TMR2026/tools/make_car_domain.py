@@ -24,13 +24,18 @@ where the car has to see first: past ~1 m. Two consequences drive this file.
    78% @640. Frames are therefore emitted at the camera's 640x480, so training
    and inference finally share one geometry.
 
-2. CONDITIONS. The dataset is well lit and clean; the car runs at analogue gain
-   22 (heavy noise) and 33 ms exposure (motion blur while cruising). Those are
-   added here because Ultralytics cannot synthesize them.
+2. CONDITIONS. The dataset is bright, flat and washed out; the camera is dark,
+   punchy and strongly saturated. Both sides of that were measured -- see the
+   table above REAL_V_MEAN -- and the `real` profile re-grades the set onto the
+   camera's statistics. The older `lowlight` profile assumed the opposite and
+   desaturated instead; it survives behind --profile for night running, but it is
+   no longer the default, because it was pushing the training set AWAY from the
+   daylight target.
 
-Detail loss is kept MILD on purpose. The source is already 320x240, so half the
-resolution is gone before this script starts; the aggressive downscaling that
-would suit a true close-up set would just destroy these images.
+Detail loss is kept MILD, and only in the `lowlight` profile. The source is
+already 320x240, so half the resolution is gone before this script starts, and
+the real frames measure SHARPER than the dataset (Laplacian variance ~960 against
+~680) -- so softening them moves away from the target rather than toward it.
 
 Every degradation is LABEL-PRESERVING: photometric changes, blur, and
 whole-frame resize (normalized YOLO coordinates are unchanged by a resize). No
@@ -141,18 +146,101 @@ def veiling_glare(img: np.ndarray, rng: random.Random) -> np.ndarray:
     return np.clip(img.astype(np.float32) * a + b, 0, 255).astype(np.uint8)
 
 
-def degrade(img: np.ndarray, rng: random.Random) -> np.ndarray:
-    """Full car-camera degradation chain, applied in physical order."""
-    out = img
-    out = detail_loss(out, rng)
+# Measured 2026-07-26 from real CameraStream frames at the deployed settings
+# (exposure 33 ms, gain 4.0, daylight), against the source dataset:
+#
+#                     real camera      traffic_lights      ratio
+#   brightness V        77 - 82            161             0.5x
+#   contrast sd         81 - 83             47             1.7x
+#   black pixels     19 - 21 %            1.3 %            15x
+#   saturation S      137 - 142             30             4.6x
+#   sharpness         956 - 980            681             1.4x
+#   noise sigma            9.4             5.4             1.7x
+#
+# The dataset is bright, flat and washed out; the camera is dark, punchy and
+# strongly saturated. The first version of this file assumed the opposite -- it
+# DESATURATED (S x0.45-1.0) to simulate low light, which pushed the set further
+# from the target and made the benchmark saturate at 100% recall while the real
+# camera was reading 0.63. These targets replace that guess with the measurement.
+REAL_V_MEAN = (66.0, 98.0)
+REAL_V_SD   = (66.0, 90.0)
+REAL_SAT    = (105.0, 152.0)
+REAL_NOISE  = (6.5, 12.5)
+
+
+def match_real_camera(img: np.ndarray, rng: random.Random) -> np.ndarray:
+    """Re-grade a frame onto the real camera's measured statistics.
+
+    Saturation first, then a linear contrast/level transform applied equally to
+    all three channels so hue survives -- red/green/yellow are separated by hue
+    alone and must not be disturbed. The transform deepens the shadows, which is
+    what produces the real camera's 20% black pixels on dark plastic track.
+    """
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV).astype(np.float32)
+    cur_s = float(hsv[..., 1].mean()) + 1e-3
+    hsv[..., 1] = np.clip(hsv[..., 1] * (rng.uniform(*REAL_SAT) / cur_s), 0, 255)
+    out = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
+
+    g = cv2.cvtColor(out, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    cur_m, cur_sd = float(g.mean()), float(g.std()) + 1e-3
+    k = float(np.clip(rng.uniform(*REAL_V_SD) / cur_sd, 0.8, 2.8))
+    f = (out.astype(np.float32) - cur_m) * k + rng.uniform(*REAL_V_MEAN)
+    return np.clip(f, 0, 255).astype(np.uint8)
+
+
+def real_noise(img: np.ndarray, rng: random.Random) -> np.ndarray:
+    """Sensor noise at the measured level, luma plus coarser chroma."""
+    sigma = rng.uniform(*REAL_NOISE)
+    f = img.astype(np.float32)
+    f += np.random.normal(0.0, sigma, f.shape).astype(np.float32)
+    if rng.random() < 0.7:
+        h, w = img.shape[:2]
+        coarse = np.random.normal(0.0, sigma * 0.5, (h // 4 + 1, w // 4 + 1, 3))
+        f += cv2.resize(coarse.astype(np.float32), (w, h),
+                        interpolation=cv2.INTER_LINEAR)
+    return np.clip(f, 0, 255).astype(np.uint8)
+
+
+def degrade_real(img: np.ndarray, rng: random.Random) -> np.ndarray:
+    """The `real` profile: match the camera, then add its optics and motion.
+
+    Deliberately light on blur. The real frames measure SHARPER than the dataset
+    (Laplacian variance ~960 against ~680), so softening them moves away from the
+    target; only occasional motion blur is justified, from the 33 ms exposure
+    while the car is rolling.
+    """
+    out = match_real_camera(img, rng)
+    if rng.random() < 0.35:
+        out = motion_blur(out, rng)
+    if rng.random() < 0.20:
+        out = veiling_glare(out, rng)
+    return real_noise(out, rng)
+
+
+def degrade_lowlight(img: np.ndarray, rng: random.Random) -> np.ndarray:
+    """The original `lowlight` profile: dim, desaturated, soft.
+
+    Kept because the car does also run under a phone flashlight at night, which
+    is what this was measured against. It is NOT the daylight domain -- see the
+    table above -- so it is no longer the default.
+    """
+    out = detail_loss(img, rng)
     if rng.random() < 0.60:
         out = motion_blur(out, rng)
     if rng.random() < 0.85:
         out = low_light(out, rng)
     if rng.random() < 0.30:
         out = veiling_glare(out, rng)
-    out = sensor_noise(out, rng)
-    return out
+    return sensor_noise(out, rng)
+
+
+PROFILES = {
+    "real": degrade_real,
+    "lowlight": degrade_lowlight,
+}
+
+# synth_signs.py imports `degrade`; keep it pointing at the current default.
+degrade = degrade_real
 
 
 # --------------------------------------------------------------------------
@@ -171,7 +259,7 @@ def list_pairs(split_dir: Path):
 
 
 def emit(pairs, out_split: Path, copies: int, seed: int, clean: bool,
-         size: tuple[int, int]) -> int:
+         size: tuple[int, int], degrade_fn=degrade_real) -> int:
     """Write `copies` degraded variants (plus optionally the clean original),
     all resampled to the camera's own frame size so training and inference
     share one geometry. Labels are normalized, so a resize never moves a box."""
@@ -197,7 +285,7 @@ def emit(pairs, out_split: Path, copies: int, seed: int, clean: bool,
             # Seeded per (image, copy) so the whole set is reproducible.
             rng = random.Random(f"{seed}:{img_p.stem}:{c}")
             np.random.seed(abs(hash((seed, img_p.stem, c))) % (2 ** 32))
-            deg = degrade(img, rng)
+            deg = degrade_fn(img, rng)
 
             name = f"{img_p.stem}__car{c}"
             cv2.imwrite(str(out_split / "images" / f"{name}.jpg"), deg,
@@ -233,6 +321,10 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=2026)
     ap.add_argument("--clean", action="store_true", default=True,
                     help="keep the clean originals in the training set")
+    ap.add_argument("--profile", choices=tuple(PROFILES), default="real",
+                    help="degradation profile; 'real' matches the measured "
+                         "daylight camera statistics, 'lowlight' is the older "
+                         "flashlight-at-night grade")
     ap.add_argument("--size", default="640x480",
                     help="emit at the camera's frame size (config CAMERA_WIDTH"
                          "/HEIGHT), so train and inference geometry agree")
@@ -244,6 +336,7 @@ def main() -> None:
         print(f"ERROR: --size must look like 640x480, got {args.size!r}")
         sys.exit(1)
     size = (sw, sh)
+    fn = PROFILES[args.profile]
 
     if not SRC.is_dir():
         print(f"ERROR: source dataset not found: {SRC}")
@@ -255,19 +348,20 @@ def main() -> None:
 
     print(f"[CAR] source: {SRC}")
     print(f"[CAR] seed={args.seed}  copies={args.copies}  "
-          f"hard_copies={args.hard_copies}  size={sw}x{sh}")
+          f"hard_copies={args.hard_copies}  size={sw}x{sh}  "
+          f"profile={args.profile}")
 
     print("\n[CAR] train split (clean + degraded)...")
     n_tr = emit(list_pairs(SRC / "train"), OUT_TRAIN / "train",
-                args.copies, args.seed, args.clean, size)
+                args.copies, args.seed, args.clean, size, fn)
 
     print("[CAR] valid split (clean + degraded)...")
     n_va = emit(list_pairs(SRC / "valid"), OUT_TRAIN / "valid",
-                args.copies, args.seed, args.clean, size)
+                args.copies, args.seed, args.clean, size, fn)
 
     print("[CAR] hard benchmark from the TEST split (degraded only)...")
     n_hd = emit(list_pairs(SRC / "test"), OUT_HARD / "val",
-                args.hard_copies, args.seed + 1, False, size)
+                args.hard_copies, args.seed + 1, False, size, fn)
 
     write_yaml(OUT_TRAIN / "data.yaml", OUT_TRAIN, "train/images", "valid/images")
     write_yaml(OUT_HARD / "data.yaml", OUT_HARD, "val/images", "val/images")
