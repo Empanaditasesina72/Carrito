@@ -22,6 +22,8 @@ try:
         CAMERA_SATURATION,
         CAMERA_SHARPNESS,
         CAMERA_DENOISE,
+        CAMERA_EXPOSURE_US,
+        CAMERA_GAIN,
     )
 except ImportError:
     CAMERA_AWB_MODE   = 4
@@ -29,6 +31,8 @@ except ImportError:
     CAMERA_SATURATION = 1.8
     CAMERA_SHARPNESS  = 4.0
     CAMERA_DENOISE    = 2
+    CAMERA_EXPOSURE_US = None
+    CAMERA_GAIN        = None
 
 
 class CameraStream:
@@ -119,22 +123,44 @@ class CameraStream:
 
 
     def _lock_ae_awb(self) -> None:
-        """Read the current exposure and white balance and lock them."""
+        """Lock exposure and white balance, honouring the config overrides.
+
+        CAMERA_EXPOSURE_US / CAMERA_GAIN win over whatever auto-exposure picked;
+        either can be None to keep the AE result for that one control.
+
+        This used to ignore both and always lock the AE result, which made
+        config.py lie about the production path: on 2026-07-26 config asked for
+        gain 4.0 and the sensor was measured running at 7.47, the value AE chose.
+        AE meters the whole frame, and the frame is mostly dark track, so it
+        pushes exposure up until the one bright object that matters -- the red
+        STOP octagon -- clips. At gain 7.47 that cost 13.9% of the frame to
+        clipping and `stop` dropped off the detector's output entirely at imgsz
+        320; at the configured 4.0 the same sign reads 0.784. Use
+        tools/tune_exposure.py to pick the values.
+        """
         try:
             meta   = self._picam2.capture_metadata()
             exp    = meta.get("ExposureTime")
             gain   = meta.get("AnalogueGain")
             cgains = meta.get("ColourGains")
 
+            src = "AE"
+            if CAMERA_EXPOSURE_US is not None:
+                exp = int(CAMERA_EXPOSURE_US)
+                src = "config"
+            if CAMERA_GAIN is not None:
+                gain = float(CAMERA_GAIN)
+                src = "config"
+
             ctrl: dict = {"AeEnable": False}
-            if exp    is not None: ctrl["ExposureTime"] = exp
-            if gain   is not None: ctrl["AnalogueGain"] = gain
+            if exp    is not None: ctrl["ExposureTime"] = int(exp)
+            if gain   is not None: ctrl["AnalogueGain"] = float(gain)
             if cgains is not None:
                 ctrl["AwbEnable"]   = False
                 ctrl["ColourGains"] = tuple(cgains)
 
             self._picam2.set_controls(ctrl)
-            print(f"[CAM] AE/AWB locked - exp={exp} us  gain={gain:.2f}")
+            print(f"[CAM] AE/AWB locked ({src}) - exp={exp} us  gain={gain:.2f}")
         except Exception as e:
             print(f"[CAM] Could not lock AE/AWB: {e}")
 
