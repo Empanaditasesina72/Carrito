@@ -22,7 +22,10 @@ where it actually ended up.
 | Acceptance band | **±30 mm** → 240–300 mm |
 | Simulator result to compare against | 292.5 mm |
 
-Steering is forced straight, so the run isolates the braking controller.
+Steering runs **closed-loop by default**: the lane pipeline feeds the PID and the
+car keeps itself centred while it approaches, the same way it does in the
+simulator. Pass `--straight` to force the wheels centred instead, which isolates
+the braking controller but lets the car drift.
 
 ---
 
@@ -129,7 +132,7 @@ Expected: mean near 270–300 mm with a small spread, and most trials inside
 | Every trial is `max_drive` | Sign not being detected — stop and report |
 | Car stops far too early (> 400 mm) | Detecting something else as a sign, or the sign is closer than assumed |
 | Car hits the sign | Raise `--max-drive` is NOT the fix — lower `--cruise` to 20 |
-| Car drifts off the lane | Expected: steering is forced straight, the track must be straight |
+| Car drifts off the lane | Only expected with `--straight`. By default the lane PID corrects; if it still drifts, check `tools/diag_track.py` reports a stable lock |
 
 ---
 

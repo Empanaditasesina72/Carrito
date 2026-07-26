@@ -1,4 +1,4 @@
-"""Physical straight-line braking experiment (Raspberry Pi 5 + real car).
+"""Physical braking experiment with lane following (Raspberry Pi 5 + real car).
 
 RUN THIS ON THE PI, WITH THE CAR. It drives the car straight at a low fixed
 speed toward a STOP sign and lets the REAL controller (AutonomousFSM + PID +
@@ -6,8 +6,10 @@ ToF) brake it, then logs the final stopping distance. Repeats for N trials so
 the paper can report mean +/- std and a success rate instead of a single run,
 and compare against the simulator (SIL stopped at 292.5 mm, setpoint 270 mm).
 
-This is the physical counterpart of Test 2 (P2). Steering is held straight,
-so it isolates the braking controller and is safe on a short straight track.
+This is the physical counterpart of Test 2 (P2). Steering is CLOSED-LOOP by
+default: the lane pipeline drives the PID and the car keeps itself centred on the
+approach, matching how the simulator runs it. Pass --straight to force the wheels
+centred instead, which isolates the braking controller but lets the car drift.
 
 MANUAL MODE (--manual): run the experiment WITHOUT the ToF sensors. The car
 still brakes on the real camera path (the sign detector feeds the FSM exactly as
