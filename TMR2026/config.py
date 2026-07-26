@@ -38,7 +38,7 @@ STEERING_INVERTED   = True
 
 IMX500_MODEL_PATH = "/usr/share/imx500-models/imx500_network_efficientdet_lite0_pp.rpk"
 
-USE_IMX500_NPU     = True
+USE_IMX500_NPU     = False
 IMX500_RPK_PATH    = "weights/tmr_signs_imx500.rpk"
 IMX500_LABELS_PATH = "weights/tmr_signs_imx500_labels.txt"
 IMX500_CONF        = 0.55
