@@ -50,6 +50,10 @@ class PIDController:
         self._last_input = 0.0
         self._last_error = 0.0
         self._last_time  = time.monotonic()
+        # False until the first compute() after construction or reset(), so the
+        # derivative term can be seeded from the real measurement instead of
+        # differentiating against a stale zero. See compute().
+        self._primed     = False
 
         self.last_error  = 0.0
         self.last_p      = 0.0
@@ -92,6 +96,19 @@ class PIDController:
         )
         i_out = self.ki * self._integral
 
+        # Seed the derivative history on the first call after construction or
+        # reset(). Without this, _last_input is 0.0 and the first sample is
+        # differentiated against it: at the steering gains (kd=0.025) a 50 px lane
+        # error one tick after a reset produced -0.025 * 50/0.02 = -62 deg, which
+        # saturates the output and slams the servo to a limit for one tick. That
+        # fires on every brake-and-resume, because _apply_steering() resets the PID
+        # throughout FRENADO and ESPERA. A derivative of zero on the first sample
+        # is the correct reading: no history means no measured rate of change.
+        if not self._primed:
+            self._last_input = measurement
+            self._last_error = error
+            self._primed = True
+
         if self.derivative_on_measurement:
             d_out = -self.kd * (measurement - self._last_input) / dt
             self._last_input = measurement
@@ -116,6 +133,7 @@ class PIDController:
         self._last_input = 0.0
         self._last_error = 0.0
         self._last_time  = time.monotonic()
+        self._primed     = False
         self.last_error  = 0.0
         self.last_p      = 0.0
         self.last_i      = 0.0
