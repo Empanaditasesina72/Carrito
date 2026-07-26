@@ -129,6 +129,12 @@ def main() -> None:
         print(f"ERROR: data yaml not found: {args.data}")
         sys.exit(1)
 
+    # Ultralytics resolves a RELATIVE `project` against its own settings
+    # runs_dir, not against the cwd: passing "runs/recal" silently produced
+    # runs/detect/runs/recal/<name>, which broke every downstream path that
+    # expected runs/recal/<name>. Absolutise it so --project means what it says.
+    args.project = str(Path(args.project).resolve())
+
     if Path(args.model).exists() or args.model in HUB_MODELS:
         base = args.model
     else:
