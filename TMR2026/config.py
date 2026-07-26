@@ -55,26 +55,27 @@ CAMERA_AWB_MODE   = 4
 CAMERA_CONTRAST   = 1.5
 CAMERA_SATURATION = 1.0
 
-# Measured with tools/tune_exposure.py, 2026-07-26, daylight, sign at ~1.5 m.
-# gain 22.0 was set the night before under a phone flashlight and it BLINDED the
-# sign detector in daylight: the red octagon clipped to white-pink (saturation
-# 23.7, 100% of its pixels at 255) and `stop` confidence read 0.000. Lane
-# detection stayed at 100% throughout, because the track is dark plastic and the
-# lane lines are R=G=B -- so a healthy lane lock proves nothing about exposure.
+# Manual exposure overrides. BOTH None = the adaptive loop below runs, which is
+# the intended configuration; set both to numbers only to pin the sensor and
+# disable adaptation. Either one alone overrides just that control at startup.
 #
-# The sweep, ranked by `stop` confidence:
-#    4 ms g1.0  -> 0.846, sat 148, frame V   4.8  (sign great, track black)
-#   16 ms g2.0  -> 0.804, sat 109, frame V  31.5
-#   33 ms g4.0  -> 0.784, sat  71, frame V  87.6  <- chosen
-#   auto (AE)   -> 0.716, sat  39, frame V 124.4  (AE meters the dark track and
-#                                                  overexposes the bright sign)
-#   33 ms g22.0 -> 0.000, NOT SEEN,        frame V 190.2
+# Do not pin these casually. Every fixed value tried on 2026-07-26 failed at some
+# point in the same day, because the sign and the lane want opposite things and the
+# light moved 4 stops between 14:00 and 15:40:
 #
-# The two goals pull against each other: the sign wants less light, the dark
-# track wants more. 33 ms / g4.0 is the compromise that keeps `stop` well clear
-# of its 0.55 gate while leaving the track bright enough for the HSV white
-# filter (V_min 130). Re-run the sweep if the lighting changes materially --
-# these are the correct values for THIS light, not for all light.
+#    4 ms g1.0  -> sign 0.846, sat 148, V   4.8  (sign great, track pitch black)
+#   16 ms g2.0  -> sign 0.804, sat 109, V  31.5
+#   33 ms g4.0  -> sign 0.784, sat  71, V  87.6  (fine at 14:00; by 15:40 the same
+#                                                 setting gave a 0.0 % lane mask)
+#   33 ms g22.0 -> sign 0.000, NOT SEEN,  V 190.2 (red clipped to white-pink)
+#
+# Note what made the gain-22 case so hard to spot: lane detection reported 100 %
+# confidence the whole time it was happening, because the track is dark plastic and
+# the lane lines are R=G=B, so the lane pipeline barely cares about exposure. A
+# healthy lane lock is NOT evidence that the camera is configured correctly.
+#
+# tools/tune_exposure.py sweeps candidates and reports sign confidence, sign
+# saturation, lane confidence and mask fill together. Rank by saturation.
 CAMERA_EXPOSURE_US = None
 CAMERA_GAIN        = None
 
