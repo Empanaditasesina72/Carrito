@@ -55,8 +55,28 @@ CAMERA_AWB_MODE   = 4
 CAMERA_CONTRAST   = 1.5
 CAMERA_SATURATION = 1.0
 
+# Measured with tools/tune_exposure.py, 2026-07-26, daylight, sign at ~1.5 m.
+# gain 22.0 was set the night before under a phone flashlight and it BLINDED the
+# sign detector in daylight: the red octagon clipped to white-pink (saturation
+# 23.7, 100% of its pixels at 255) and `stop` confidence read 0.000. Lane
+# detection stayed at 100% throughout, because the track is dark plastic and the
+# lane lines are R=G=B -- so a healthy lane lock proves nothing about exposure.
+#
+# The sweep, ranked by `stop` confidence:
+#    4 ms g1.0  -> 0.846, sat 148, frame V   4.8  (sign great, track black)
+#   16 ms g2.0  -> 0.804, sat 109, frame V  31.5
+#   33 ms g4.0  -> 0.784, sat  71, frame V  87.6  <- chosen
+#   auto (AE)   -> 0.716, sat  39, frame V 124.4  (AE meters the dark track and
+#                                                  overexposes the bright sign)
+#   33 ms g22.0 -> 0.000, NOT SEEN,        frame V 190.2
+#
+# The two goals pull against each other: the sign wants less light, the dark
+# track wants more. 33 ms / g4.0 is the compromise that keeps `stop` well clear
+# of its 0.55 gate while leaving the track bright enough for the HSV white
+# filter (V_min 130). Re-run the sweep if the lighting changes materially --
+# these are the correct values for THIS light, not for all light.
 CAMERA_EXPOSURE_US = 33000
-CAMERA_GAIN        = 22.0
+CAMERA_GAIN        = 4.0
 CAMERA_SHARPNESS  = 4.0
 CAMERA_DENOISE    = 2
 CAMERA_BUFFERS    = 6
