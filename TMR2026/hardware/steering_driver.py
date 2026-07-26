@@ -39,6 +39,11 @@ try:
 except ImportError:
     STEERING_INVERTED = False
 
+try:
+    from config import SERVO_TRIM_DEG
+except ImportError:
+    SERVO_TRIM_DEG = 0.0
+
 
 class SteeringDriver:
     """Steering control with Ackermann geometry over a PCA9685."""
@@ -57,9 +62,25 @@ class SteeringDriver:
         self.center()
 
     def center(self):
-        """Wheels straight ahead (geometric centre)."""
-        self._servo.angle = SERVO_CENTER_ANGLE
+        """Wheels straight ahead (geometric centre plus the mechanical trim)."""
+        self._servo.angle = self._physical(SERVO_CENTER_ANGLE)
         self._current_angle = SERVO_CENTER_ANGLE
+
+    def _physical(self, angle_deg: float) -> float:
+        """
+        Logical angle -> angle actually written to the servo.
+
+        Applies the steering inversion and then SERVO_TRIM_DEG, which absorbs the
+        mechanical offset between the servo's electrical centre and the angle at
+        which the wheels really point straight. Without it a logical 90 deg can
+        still pull to one side, and the PID has no way to know: it is told the
+        lane error is zero, outputs zero correction, and the car drifts.
+
+        The trim is applied AFTER the inversion so it is a fixed offset in servo
+        space, independent of which way the linkage is mounted.
+        """
+        physical = (2.0 * SERVO_CENTER_ANGLE - angle_deg) if STEERING_INVERTED else angle_deg
+        return max(0.0, min(180.0, physical + SERVO_TRIM_DEG))
 
     def set_angle(self, angle_deg: float):
         """
@@ -76,8 +97,7 @@ class SteeringDriver:
         by consumers (signals/PID/etc.).
         """
         angle_deg = max(SERVO_MIN_ANGLE, min(SERVO_MAX_ANGLE, float(angle_deg)))
-        physical = (2.0 * SERVO_CENTER_ANGLE - angle_deg) if STEERING_INVERTED else angle_deg
-        self._servo.angle = physical
+        self._servo.angle = self._physical(angle_deg)
         self._current_angle = angle_deg
 
     def steer_from_error(self, lane_error_px: float, kp: float = 0.09) -> float:
