@@ -62,7 +62,7 @@ from config import (
 )
 from hardware.motor import MotorDriver
 from hardware.steering_driver import SteeringDriver
-from hardware.distance_sensor import DistanceSensor
+from hardware.distance_sensor import DistanceSensor, make_distance_sensor
 from control.pid_controller import PIDController
 from control.fsm import AutonomousFSM, FSMState
 
@@ -217,7 +217,7 @@ def main() -> int:
 
     motor = MotorDriver(pin_rpwm=PIN_MOTOR_RPWM, pin_lpwm=PIN_MOTOR_LPWM)
     steering = SteeringDriver()
-    sensor = None if args.manual else DistanceSensor()
+    sensor = None if args.manual else make_distance_sensor()
     camera, sign_det = _build_vision()
     pid = PIDController(kp=PID_KP, ki=PID_KI, kd=PID_KD, setpoint=0.0,
                         output_limits=(-(SERVO_CENTER_ANGLE - SERVO_MIN_ANGLE),

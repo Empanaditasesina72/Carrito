@@ -117,7 +117,7 @@ _TRACK_CALIB = _load_track_calib()
 
 from hardware.motor            import MotorDriver
 from hardware.steering_driver  import SteeringDriver
-from hardware.distance_sensor  import DistanceSensor
+from hardware.distance_sensor  import DistanceSensor, make_distance_sensor
 from hardware.signals          import TurnSignals, SignalMode
 from hardware.brake_light      import BrakeLight
 from vision.camera_stream      import CameraStream
@@ -197,7 +197,7 @@ class VehicleTMR:
 
         self.motor    = MotorDriver(pin_rpwm=MOTOR_RPWM, pin_lpwm=MOTOR_LPWM)
         self.steering = SteeringDriver()
-        self.sensor   = DistanceSensor()
+        self.sensor   = make_distance_sensor()
         self.signals  = TurnSignals(
             pin_left  = PIN_LED_TURN_LEFT,
             pin_right = PIN_LED_TURN_RIGHT,

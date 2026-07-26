@@ -136,3 +136,46 @@ class DistanceSensor:
                 self._rear_mm  = rear
 
             time.sleep(TOF_POLL_INTERVAL_S)
+
+
+class NullDistanceSensor:
+    """
+    Stand-in for the ToF pair when it is disabled or absent.
+
+    Presents the same interface and always reports "no reading", which is what
+    every consumer already handles: the FSM treats `lidar_mm is None` as "no
+    distance information" and falls back to the camera path, and the telemetry
+    prints "---". Using a null object keeps the decision in one place instead of
+    scattering `if sensor is not None` through main.py's eight call sites.
+    """
+
+    def start(self):
+        print("[ToF] DISABLED (config.py:USE_TOF_SENSORS=False) - "
+              "distance readings will always be None")
+
+    def stop(self):
+        pass
+
+    @property
+    def front_mm(self) -> float | None:
+        return None
+
+    @property
+    def rear_mm(self) -> float | None:
+        return None
+
+    @property
+    def distance_mm(self) -> float | None:
+        return None
+
+    def is_obstacle_near(self, threshold_mm: float) -> bool:
+        return False
+
+
+def make_distance_sensor():
+    """Real sensor pair, or a null one when config.py disables them."""
+    try:
+        from config import USE_TOF_SENSORS
+    except ImportError:
+        USE_TOF_SENSORS = True
+    return DistanceSensor() if USE_TOF_SENSORS else NullDistanceSensor()
