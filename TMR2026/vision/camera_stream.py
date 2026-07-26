@@ -47,6 +47,10 @@ class CameraStream:
         cam.stop()
     """
 
+    # Seconds to wait after locking exposure/gain before serving frames, so the
+    # sensor has adopted the manual values. See start().
+    CONTROL_SETTLE_S = 0.6
+
     def __init__(
         self,
         width:        int   = 640,
@@ -92,6 +96,13 @@ class CameraStream:
         print(f"[CAM] Settling AE/AWB ({self._warmup_s:.1f} s)...")
         time.sleep(self._warmup_s)
         self._lock_ae_awb()
+        # The sensor needs a few frames to actually adopt manual exposure/gain.
+        # Measured 2026-07-26: immediately after the lock the metadata still read
+        # gain 6.52 with 14.2% of the frame clipped; 0.5 s later it read the
+        # configured 4.00 at 2.7%. Without this wait the first ~15 frames are
+        # served at the wrong exposure, which is enough to make a short
+        # diagnostic run draw the wrong conclusion.
+        time.sleep(self.CONTROL_SETTLE_S)
         self._stop.clear()
         threading.Thread(
             target=self._capture_loop,
@@ -120,6 +131,7 @@ class CameraStream:
         self._picam2.set_controls({"AeEnable": True, "AwbEnable": True})
         time.sleep(self._warmup_s)
         self._lock_ae_awb()
+        time.sleep(self.CONTROL_SETTLE_S)
 
 
     def _lock_ae_awb(self) -> None:
