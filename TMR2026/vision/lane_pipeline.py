@@ -70,6 +70,13 @@ class LanePipeline:
         [0.20, 0.00],
     ])
     BEV_SCALE_PX_PER_CM = 384.0 / (LANE_WIDTH_M * 100.0)
+
+    # How far beyond the destination window a column may still be trusted, as a
+    # fraction of frame width. See the note where _valid_x0/_valid_x1 are built.
+    # 0.0 crops hard at the lane edge and will drop a line whenever the car is a
+    # little off centre; too large and the homography's lateral extrapolations
+    # come back. 0.06 was chosen from measured line positions.
+    BEV_VALID_MARGIN_RATIO = 0.06
     LANE_WIDTH_TOL = 0.40
 
     HSV_WHITE_LO = np.array([  0,  0, 130])
@@ -123,8 +130,28 @@ class LanePipeline:
         self._bev_w = frame_w
         self._bev_h = frame_h - self._roi_y
 
-        self._valid_x0 = int(round(self.BEV_DST_RATIO[:, 0].min() * frame_w))
-        self._valid_x1 = int(round(self.BEV_DST_RATIO[:, 0].max() * frame_w))
+        # The destination window spans exactly one lane width by construction
+        # (BEV_SCALE_PX_PER_CM is derived from LANE_WIDTH_M), so a car centred in
+        # its lane puts BOTH lines precisely on the window's edges. Cropping hard
+        # at the edge therefore deletes a legitimately-positioned line as soon as
+        # the car sits a couple of centimetres off centre.
+        #
+        # Measured 2026-07-26: left line at BEV x=110, right at x=490 -- a
+        # separation of 380 px against the expected 384, so the geometry was very
+        # nearly ideal -- yet the left line fell outside [128, 512] and was
+        # zeroed, dropping the pipeline to "RIGHT only" and 50% confidence.
+        #
+        # The margin buys tolerance for that offset while still discarding the far
+        # periphery, which is what the crop exists for: at 0.06 the window becomes
+        # [90, 550], which keeps the line at 110 and still rejects the sunlit floor
+        # measured at x=619. Columns out there are lateral extrapolations of the
+        # homography and were the source of the all-white mask that produced a
+        # false 100% lock.
+        margin = int(round(self.BEV_VALID_MARGIN_RATIO * frame_w))
+        lo = self.BEV_DST_RATIO[:, 0].min() * frame_w - margin
+        hi = self.BEV_DST_RATIO[:, 0].max() * frame_w + margin
+        self._valid_x0 = max(0, int(round(lo)))
+        self._valid_x1 = min(frame_w, int(round(hi)))
 
         self._smooth_error = 0.0
         self._prev_conf    = 0.0
