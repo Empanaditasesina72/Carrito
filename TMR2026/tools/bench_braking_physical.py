@@ -109,8 +109,9 @@ def run_trial(fsm, camera, sign_det, sensor, cruise_pwm, max_drive_s,
         dt = now - t_last
         t_last = now
 
-        if sign_det is not camera and camera.get_frame() is not None:
-            sign_det.update_frame(camera.get_frame())
+        frame = camera.get_frame()
+        if sign_det is not camera and frame is not None:
+            sign_det.update_frame(frame)
 
         front = sensor.front_mm if sensor is not None else None
         if front is not None:
