@@ -90,7 +90,7 @@ def _build_vision():
 
 
 def run_trial(fsm, camera, sign_det, sensor, cruise_pwm, max_drive_s,
-              kick_pwm=0.0, kick_s=0.25) -> dict:
+              kick_pwm=0.0, kick_s=0.25, lane_pipe=None) -> dict:
     fsm.MAX_AUTO_PWM = float(cruise_pwm)      # cap cruise speed for safety
     fsm.PRECAUCION_PWM = min(fsm.PRECAUCION_PWM, cruise_pwm * 0.6)
     if kick_pwm > 0:
@@ -120,9 +120,19 @@ def run_trial(fsm, camera, sign_det, sensor, cruise_pwm, max_drive_s,
                 reason = "tof_emergency"
                 break
 
-        # straight-line braking test: force straight steering, real speed/brake logic
-        fsm.lane_error = 0.0
-        fsm.lane_conf = 1.0
+        # Closed-loop steering when a lane pipeline is supplied. Forcing the error
+        # to zero "isolates" the braking controller in principle, but the vehicle
+        # cannot hold a line open-loop -- it drifts out of the lane before braking
+        # matters, which measures nothing. Letting the lane follower correct the
+        # drift is both what the production system does and the only way the run
+        # stays on a 3.46 m track.
+        if lane_pipe is not None and frame is not None:
+            lane = lane_pipe.process(frame)
+            fsm.lane_error = lane.error_px
+            fsm.lane_conf = lane.confidence
+        else:
+            fsm.lane_error = 0.0
+            fsm.lane_conf = 1.0
         fsm.lidar_mm = front
         fsm.sign_visible = (sign_det.has_sign("stop_sign") or sign_det.has_sign("red"))
         closest = sign_det.closest_sign("stop_sign") or sign_det.closest_sign("red")
@@ -192,6 +202,10 @@ def main() -> int:
                     help="no ToF: brake on the camera, measure with a tape")
     ap.add_argument("--max-drive", type=float, default=3.0,
                     help="seconds the car may move before being braked anyway")
+    ap.add_argument("--straight", action="store_true",
+                    help="force zero lane error instead of following the lane. "
+                         "Open loop: the car will drift, use only with the wheels "
+                         "off the ground")
     ap.add_argument("--kick", type=float, default=0.0,
                     help="breakaway pulse %% PWM before each trial, for a loaded "
                          "car that stalls at the cruise duty (try 60)")
@@ -214,6 +228,30 @@ def main() -> int:
         print("  Measure the gap with a tape after each trial and type it in.")
     print("  Ctrl+C = emergency brake + exit")
     print("=" * 60)
+
+    lane_pipe = None
+    if not args.straight:
+        from vision.lane_pipeline import LanePipeline
+        calib = {}
+        try:
+            import json
+            with open(ROOT / "track_calib.json", "r", encoding="utf-8") as f:
+                calib = json.load(f)
+            print(f"  lane calibration: {dict(calib)}")
+        except FileNotFoundError:
+            print("  lane calibration: none (config defaults)")
+        except Exception as e:
+            print(f"  lane calibration: unreadable ({e}); using defaults")
+        lane_pipe = LanePipeline(
+            frame_w=CAMERA_W, frame_h=CAMERA_H, debug=False,
+            right_bias=calib.get("right_bias", 0.70),
+            roi_frac=calib.get("roi_frac", 0.5),
+            hsv_white_lo=calib.get("hsv_white_lo"),
+            hsv_white_hi=calib.get("hsv_white_hi"),
+        )
+        print("  steering: CLOSED LOOP on the lane (like the simulator)")
+    else:
+        print("  steering: forced straight, OPEN LOOP - the car will drift")
 
     motor = MotorDriver(pin_rpwm=PIN_MOTOR_RPWM, pin_lpwm=PIN_MOTOR_LPWM)
     steering = SteeringDriver()
@@ -242,7 +280,8 @@ def main() -> int:
                 input(f"\n[Trial {k}/{args.trials}] Place car at the start line, "
                       f"press Enter (Ctrl+C to stop)...")
             r = run_trial(fsm, camera, sign_det, sensor, args.cruise,
-                          args.max_drive, args.kick, args.kick_ms / 1000.0)
+                          args.max_drive, args.kick, args.kick_ms / 1000.0,
+                          lane_pipe)
             r["trial"] = k
             if sensor is None and not args.no_prompt:
                 print(f"  -> the car stopped ({r['stop_reason']}, "
