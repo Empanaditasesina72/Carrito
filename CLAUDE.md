@@ -157,7 +157,23 @@ These are full implementations kept for future wiring. Treat as library code:
 - `TMR2026/weights/tmr_signs_imx500.rpk` — INT8 package for the IMX500 NPU (on-camera inference). NOT in the repo by default: it must be generated on the Pi with `python tools/export_imx500.py` (Sony's converter is Linux-only; quantization takes 15-60 min, once). Class order lives in `tmr_signs_imx500_labels.txt`. Tune `config.py:IMX500_CONF` after quantization. After retraining the model, regenerate BOTH exports (NCNN + rpk).
 - `_legacy/runs/detect/train2/weights/` — source of the active model (checkpoint + training artifacts).
 - `_legacy/runs/detect/train/weights/best.pt` — larger variant (~18 MB) kept as backup.
-- `traffic_lights/` — Roboflow v9 dataset (1470 close-up sign images, no track photos). Use to re-train if adding a `crosswalk` class.
+- `traffic_lights/` — Roboflow v9 dataset, 1470 images. **This entry used to say
+  "close-up sign images, no track photos". That was wrong and it cost hours of
+  work aimed at the wrong gap.** Measured 2026-07-26:
+  - images are **320×240**, not 640×480;
+  - they are **scale-model track photography** very close to this vehicle's own
+    setup (track surface, lane lines, signs on stands, indoor floors), not
+    close-ups;
+  - ground-truth box heights are **14–116 px, median 45**. Scaled to the
+    camera's 640×480 that is 28–232 px, median 90, versus the car's own pinhole
+    range of 28 px @1.5 m → 154 px @0.27 m. So the set covers the **near** half
+    of the car's range densely and **thins out past ~1 m**, which is where the
+    car has to see first.
+  Two consequences: training at imgsz 640 on 320×240 source is 2× interpolation,
+  and inferring at imgsz 320 halves a 640×480 camera frame so the 28 px sign at
+  1.5 m arrives as 14 px — under the dataset's own p10. That is the mechanism
+  behind the measured 61 % @320 vs 78 % @640. Re-measure with
+  `python TMR2026/tools/eval_hard.py` before trusting any claim about this set.
 - **Sign-detector retraining**: `tools/train_signs.py` fine-tunes `tmr_signs.pt` with generalization augmentation. Flips are disabled on purpose (`fliplr=flipud=0`) — directional arrow classes (left/right/straight) would be mislabeled by mirroring. Auto-selects CUDA; this PC's torch is CPU-only (GTX 1650 unused until a CUDA wheel is installed).
 
 ## Learned steering (DriveNet, opt-in behavioral cloning)

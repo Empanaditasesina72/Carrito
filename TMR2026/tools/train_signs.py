@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 """Retrain the traffic-sign detector for robustness / track generalization.
 
-Fine-tunes weights/tmr_signs.pt (the validated 7-class model) on
-traffic_lights/data.yaml with a generalization-focused augmentation recipe, so
-the detector survives the real track's distance, lighting and motion blur
-instead of only the close-up Roboflow shots.
+Fine-tunes weights/tmr_signs.pt (the validated 7-class model) with a
+generalization-focused augmentation recipe, so the detector survives the real
+track's distance, lighting and motion blur.
+
+Point --data at TMR2026/datasets/merged_signs.yaml (built by
+tools/overnight_signs.py from make_car_domain + synth_signs) rather than at
+traffic_lights/data.yaml directly: the raw Roboflow set is 320x240, so training
+on it at imgsz 640 is 2x interpolation and does not match what the camera hands
+the detector. See the traffic_lights entry in CLAUDE.md for the measurements.
 
 CRITICAL for THIS dataset: the classes include directional arrows
 (left / right / straight). Horizontal and vertical flips are therefore DISABLED
@@ -61,9 +66,37 @@ WASHOUT_ROBUST_AUG = dict(
     scale=0.7,
 )
 
+# Pairs with the offline degradation in tools/make_car_domain.py. That script
+# already supplies the photometric extremes (gain-22 noise, gamma darkening,
+# motion blur, resolution loss) that Ultralytics cannot synthesize, so the
+# online half concentrates on GEOMETRY: `scale` up to 0.9 plus full mosaic keeps
+# shrinking the sign toward the ~28 px it occupies at 1.5 m, which is the size
+# the detector keeps failing at.
+CAR_DOMAIN_AUG = dict(
+    GENERALIZATION_AUG,
+    hsv_s=0.9,
+    hsv_v=0.6,
+    scale=0.9,
+    translate=0.15,
+    degrees=10.0,
+    perspective=0.0008,
+    close_mosaic=15,
+    mixup=0.05,
+    erasing=0.30,
+)
+
 RECIPES = {
     "generalization": GENERALIZATION_AUG,
     "washout": WASHOUT_ROBUST_AUG,
+    "cardomain": CAR_DOMAIN_AUG,
+}
+
+# Names Ultralytics resolves and downloads on its own. Without this list a
+# --model that is not a local file silently degrades to yolov8n.pt, so asking
+# for yolov8s would quietly train an n and the comparison would be a lie.
+HUB_MODELS = {
+    "yolov8n.pt", "yolov8s.pt", "yolov8m.pt", "yolov8l.pt", "yolov8x.pt",
+    "yolo11n.pt", "yolo11s.pt", "yolo11m.pt", "yolo11l.pt", "yolo11x.pt",
 }
 
 
@@ -82,14 +115,24 @@ def main() -> None:
                          "brightness jitter for pale prints and mixed light")
     ap.add_argument("--name", default="train_signs")
     ap.add_argument("--project", default=str(REPO_ROOT / "runs"))
+    ap.add_argument("--time", type=float, default=None,
+                    help="hard wall-clock cap in HOURS; overrides --epochs when "
+                         "it runs out and still writes best.pt. Used by "
+                         "tools/overnight_signs.py to keep a queue on schedule.")
+    ap.add_argument("--cache", default=None, choices=("ram", "disk"),
+                    help="cache images to speed up epochs (ram needs the "
+                         "dataset to fit in memory)")
+    ap.add_argument("--workers", type=int, default=8)
     args = ap.parse_args()
 
     if not Path(args.data).exists():
         print(f"ERROR: data yaml not found: {args.data}")
         sys.exit(1)
 
-    base = args.model if Path(args.model).exists() else "yolov8n.pt"
-    if base != args.model:
+    if Path(args.model).exists() or args.model in HUB_MODELS:
+        base = args.model
+    else:
+        base = "yolov8n.pt"
         print(f"[TRAIN] {args.model} not found -> training from {base}")
 
     from ultralytics import YOLO
@@ -113,6 +156,14 @@ def main() -> None:
         print("[TRAIN] hue jitter left narrow ON PURPOSE: red/green/yellow are "
               "separated by hue alone, widening it would destroy them.")
 
+    extra: dict = {}
+    if args.time:
+        extra["time"] = args.time
+        print(f"[TRAIN] wall-clock cap: {args.time:.2f} h "
+              f"(best.pt is still written when it expires)")
+    if args.cache:
+        extra["cache"] = args.cache
+
     model = YOLO(base)
     model.train(
         data=args.data,
@@ -123,7 +174,9 @@ def main() -> None:
         patience=args.patience,
         project=args.project,
         name=args.name,
+        workers=args.workers,
         **RECIPES[args.recipe],
+        **extra,
     )
 
     best = Path(args.project) / args.name / "weights" / "best.pt"
