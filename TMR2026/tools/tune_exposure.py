@@ -68,6 +68,24 @@ CANDIDATES = [
 ]
 
 
+def measure_lane(frame: np.ndarray, lane_pipe):
+    """Lane confidence and mask fill at this exposure.
+
+    The sign and the lane pull in opposite directions -- the sign wants less light
+    so the red octagon does not clip to white, the dark plastic track wants more so
+    the lines clear the threshold -- and an earlier version of this tool only
+    measured the sign. That produced a setting where `stop` read 0.78 while the
+    lane pipeline reported a DEGENERATE mask a couple of hours later. Both numbers
+    have to be on screen to pick anything.
+    """
+    res = None
+    for _ in range(4):                 # let the EMA settle on a near-static scene
+        res = lane_pipe.process(frame)
+    fill = float((lane_pipe.last_mask_fill
+                  if hasattr(lane_pipe, "last_mask_fill") else 0.0))
+    return res.confidence, fill, getattr(lane_pipe, "last_v_min", 0)
+
+
 def measure(frame: np.ndarray, model, imgsz: int, probe: float):
     """Best `stop` detection in one frame, plus why it looks the way it does."""
     res = model.predict(frame, imgsz=imgsz, conf=probe, verbose=False)[0]
@@ -128,6 +146,7 @@ def main() -> None:
 
     from picamera2 import Picamera2
     from ultralytics import YOLO
+    from vision.lane_pipeline import LanePipeline
 
     print(f"[TUNE] loading {args.weights} ...")
     model = YOLO(args.weights)
@@ -148,9 +167,9 @@ def main() -> None:
     if args.dist:
         print(f"[TUNE] sign distance noted: {args.dist:.2f} m")
 
-    print(f"\n{'setting':14} {'stop conf':>10} {'sat':>7} {'box clip':>9} "
-          f"{'frame clip':>11} {'frame V':>8}")
-    print("-" * 64)
+    print(f"\n{'setting':14} {'stop conf':>10} {'sat':>7} {'clip':>6} "
+          f"{'frameV':>7} | {'lane conf':>10} {'fill':>6} {'V_min':>6}")
+    print("-" * 78)
 
     rows = []
     for label, exp, gain in CANDIDATES:
@@ -170,6 +189,7 @@ def main() -> None:
             eff = (exp, gain)
         time.sleep(args.settle)
 
+        lane_pipe = LanePipeline()
         acc = []
         for _ in range(args.frames):
             # "RGB888" already hands back BGR-ordered bytes on this camera -- no
@@ -180,20 +200,36 @@ def main() -> None:
 
         conf = max(a[0] for a in acc)
         sat = max(a[1] for a in acc)
-        bclip = np.mean([a[2] for a in acc])
         fclip = np.mean([a[3] for a in acc])
         fv = np.mean([a[4] for a in acc])
 
-        mark = "  <-- passes gate" if conf >= GATE else ("  (under gate)" if conf else "  NOT SEEN")
-        print(f"{label:14} {conf:10.3f} {sat:7.1f} {bclip:8.1f}% "
-              f"{fclip:10.1f}% {fv:8.1f}{mark}")
-        rows.append((conf, sat, label, eff))
+        lconf, lfill, lvmin = measure_lane(picam2.capture_array(), lane_pipe)
+
+        sign_ok = conf >= GATE
+        lane_ok = lconf >= 0.9 and 0.5 <= lfill <= 35.0
+        if sign_ok and lane_ok:
+            mark = "  <-- BOTH OK"
+        elif sign_ok:
+            mark = "  sign ok, lane no"
+        elif lane_ok:
+            mark = "  lane ok, sign no"
+        else:
+            mark = "  neither"
+        print(f"{label:14} {conf:10.3f} {sat:7.1f} {fclip:5.1f}% "
+              f"{fv:7.1f} | {lconf:10.0%} {lfill:5.1f}% {lvmin:6d}{mark}")
+        # Rank by serving BOTH: a setting that blinds one of them is not a
+        # candidate however good its other number looks.
+        rows.append((int(sign_ok and lane_ok), conf, sat, label, eff))
 
     picam2.stop()
 
-    rows.sort(key=lambda r: (-r[0], -r[1]))
-    conf, sat, label, eff = rows[0]
-    print("-" * 64)
+    rows.sort(key=lambda r: (-r[0], -r[1], -r[2]))
+    _both, conf, sat, label, eff = rows[0]
+    print("-" * 78)
+    if not _both:
+        print("[TUNE] WARNING: no setting satisfied BOTH the sign and the lane. "
+              "Ambient light may simply be too low -- turn the room lights on and "
+              "re-run rather than accepting a setting that blinds one of them.")
     print(f"[TUNE] best: {label}  stop conf {conf:.3f}  sign saturation {sat:.1f}")
     if conf < GATE:
         print(f"[TUNE] WARNING: even the best setting is under the {GATE} gate. "

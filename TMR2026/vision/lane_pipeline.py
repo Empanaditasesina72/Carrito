@@ -257,6 +257,12 @@ class LanePipeline:
         mask[:, :self._valid_x0] = 0
         mask[:, self._valid_x1:] = 0
 
+        # Exposed for diagnostics: a healthy lane mask covers a few percent of the
+        # view. Near 0 means nothing passed the threshold; very high means the
+        # track itself is leaking in. tools/tune_exposure.py and diag_track.py both
+        # read it to tell those two failures apart from a real lock.
+        self.last_mask_fill = float((mask > 0).mean() * 100.0)
+
         result = self._sliding_windows(mask)
 
         # Zero out the standing bias before any smoothing, so the EMA, the
