@@ -223,7 +223,15 @@ def main() -> None:
 
     picam2.stop()
 
-    rows.sort(key=lambda r: (-r[0], -r[1], -r[2]))
+    # Among the settings that serve both, rank by the sign's SATURATION, not its
+    # confidence. Measured this evening, the three that passed both spanned only
+    # 0.761-0.772 in confidence -- noise -- while their saturation spanned
+    # 46.6 to 102.4, better than 2x. Saturation is the leading indicator of the
+    # failure that actually bit: this morning's blinding had the red octagon at
+    # S 23.7 with confidence 0.000. A setting at S 46 is already heading that way
+    # and will clip the moment the light rises, while one at S 102 has room.
+    # Confidence only breaks ties.
+    rows.sort(key=lambda r: (-r[0], -r[2], -r[1]))
     _both, conf, sat, label, eff = rows[0]
     print("-" * 78)
     if not _both:
