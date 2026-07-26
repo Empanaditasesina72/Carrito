@@ -81,7 +81,8 @@ def _power_w() -> float | None:
             continue
         name = parts[0]
         try:
-            val = float(parts[1].split("=")[1])
+            # vcgencmd appends the unit to the number: "current(0)=0.0985A"
+            val = float(parts[1].split("=")[1].rstrip("AVav"))
         except ValueError:
             continue
         if name.endswith("_A"):
