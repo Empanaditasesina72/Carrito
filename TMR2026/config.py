@@ -172,7 +172,7 @@ LANE_MIN_CONFIDENCE = 0.20
 # Re-measure after remounting the camera: centre the car in the lane by hand, run
 #   python tools/diag_track.py --frames 12
 # and put the reported mean error_px here. Positive means the pipeline reads high.
-LANE_ERROR_OFFSET_PX = 0.0
+LANE_ERROR_OFFSET_PX = 30.6
 
 STOP_BRAKE_START_MM  = 700
 STOP_TARGET_MM       = 270
