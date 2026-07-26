@@ -69,6 +69,11 @@ class CameraStream:
     # sensor has adopted the manual values. See start().
     CONTROL_SETTLE_S = 0.6
 
+    # Cadence while the exposure is outside the target band. Converging is urgent
+    # -- the lane is blind until it lands -- so it re-checks as fast as the sensor
+    # can adopt a change, then falls back to CAMERA_ADAPT_INTERVAL_S once settled.
+    ADAPT_FAST_INTERVAL_S = 0.35
+
     def __init__(
         self,
         width:        int   = 640,
@@ -92,6 +97,7 @@ class CameraStream:
         self._gain  = 2.0
         self._last_adapt         = 0.0
         self._adapt_settle_until = 0.0
+        self._out_of_band        = False
 
         from picamera2 import Picamera2
         self._picam2 = Picamera2()
@@ -235,19 +241,30 @@ class CameraStream:
         v    = float(gray.mean())
         clip = 100.0 * float((gray >= 250).mean())
 
+        # Step limits are wide on purpose. Measured with the exposure forced to
+        # exp=1000/gain=1.0 (V=0.0): a 2.0x-per-cycle cap at 1.5 s intervals took
+        # ~13 s of doublings to climb back into band. Thirteen seconds blind is
+        # unacceptable for a moving car, and the correction is multiplicative on a
+        # quantity spanning 33000 x 16, so it needs room to move.
+        target = 0.5 * (CAMERA_ADAPT_V_LO + CAMERA_ADAPT_V_HI)
+
         if clip > CAMERA_ADAPT_CLIP_MAX:
-            factor = max(0.55, 1.0 - (clip - CAMERA_ADAPT_CLIP_MAX) / 25.0)
+            factor = max(0.35, 1.0 - (clip - CAMERA_ADAPT_CLIP_MAX) / 15.0)
             why    = f"clip {clip:.1f}%"
         elif v < CAMERA_ADAPT_V_LO:
-            target = 0.5 * (CAMERA_ADAPT_V_LO + CAMERA_ADAPT_V_HI)
-            factor = min(2.0, target / max(v, 1.0))
+            factor = min(6.0, target / max(v, 0.5))
             why    = f"dark V {v:.1f}"
         elif v > CAMERA_ADAPT_V_HI:
-            target = 0.5 * (CAMERA_ADAPT_V_LO + CAMERA_ADAPT_V_HI)
-            factor = max(0.5, target / v)
+            factor = max(0.25, target / v)
             why    = f"bright V {v:.1f}"
         else:
+            self._out_of_band = False
             return                      # inside the band, leave the sensor alone
+
+        # Out of band, re-check sooner than the idle cadence: converging is urgent,
+        # and once in band the interval goes back to CAMERA_ADAPT_INTERVAL_S so a
+        # settled scene is not metered constantly.
+        self._out_of_band = True
 
         prod = self._exp * self._gain * factor
         exp  = min(CAMERA_ADAPT_EXP_MAX_US,
@@ -291,7 +308,9 @@ class CameraStream:
             # adopting the last change: measured, it needs ~0.5 s, and metering a
             # frame from before the change would make the loop chase its own tail.
             now = time.monotonic()
-            if (now - self._last_adapt >= CAMERA_ADAPT_INTERVAL_S
+            interval = (self.ADAPT_FAST_INTERVAL_S if self._out_of_band
+                        else CAMERA_ADAPT_INTERVAL_S)
+            if (now - self._last_adapt >= interval
                     and now >= self._adapt_settle_until):
                 self._last_adapt = now
                 self._adapt_exposure(bgr)
