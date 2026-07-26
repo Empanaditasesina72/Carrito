@@ -171,7 +171,17 @@ An optional CNN replacement for the classic lane follower. `vision/drive_net.py:
 ## Hard rules (don't break these)
 
 - **Never modify `motor.brake()`** — it must remain an instantaneous hard-cut to 0.
-- **Never remove `cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)`** in `vision/camera_stream.py`.
+- **Do NOT add a `cv2.COLOR_RGB2BGR` conversion after `capture_array()`** (this rule
+  was the opposite until 2026-07-25, when it was measured to be wrong). Picamera2's
+  `"RGB888"` names the 24-bit packing, not the channel order OpenCV sees: the array
+  already arrives **BGR-ordered**. Measured against the printed red STOP sign on this
+  camera — array as-is `H=9.4` (red), after `COLOR_RGB2BGR` `H=110.8` (cyan). The
+  conversion inverted red and blue, so the STOP looked cyan, the red/purple blob
+  fallback could never fire (it needs `H<=12` or `H>=165` and was handed 111), and the
+  `red`/`green` traffic-light classes would have been swapped. White lane lines have
+  `R=G=B`, so the lane pipeline was unaffected and hid the bug for a long time. If
+  colours ever look inverted again, re-measure with a known-red object before
+  changing this.
 - **Never edit `vision_module.py`** — it's the user's personal camera experiment. Its hazard/turn-signal code is independent from the production `hardware/signals.py` module.
 - **Never import from `_legacy/`** inside `TMR2026/`.
 - **ESPERA state must use `time.monotonic()`**, not `time.sleep()` — the loop must keep serving the FSM.

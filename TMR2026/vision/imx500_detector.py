@@ -8,7 +8,7 @@ plus the output tensors in the metadata. CPU used for inference: ~0%.
 `SignDetector` play in the CPU path, exposing BOTH interfaces:
 
   As a camera (for LanePipeline / overlay):
-      get_frame() -> BGR (golden rule RGB888 -> cv2.COLOR_RGB2BGR)
+      get_frame() -> BGR (RGB888 is already BGR-ordered; no conversion)
 
   As a detector (for the FSM / telemetry):
       get_detections() / has_sign() / has_any_sign() / closest_sign()
@@ -307,12 +307,22 @@ class IMX500CameraStream:
             try:
                 request = self._picam2.capture_request()
                 try:
-                    rgb      = request.make_array("main")
+                    bgr      = request.make_array("main")
                     metadata = request.get_metadata()
                 finally:
                     request.release()
 
-                bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+                # No colour conversion here, on purpose. Picamera2's "RGB888"
+                # format returns BGR-ordered bytes -- the name describes the
+                # 24-bit packing, not the channel order OpenCV sees. Measured on
+                # this camera against the printed red STOP sign: the array as-is
+                # reads H=9.4 (red); after cv2.COLOR_RGB2BGR it reads H=110.8
+                # (cyan). The conversion was inverting red and blue, which left
+                # the STOP looking cyan, made the red/purple blob fallback
+                # unreachable (it needs H<=12 or H>=165, and got 111), and would
+                # have swapped the red and green traffic-light classes. White lane
+                # lines were unaffected, which is why the lane pipeline worked
+                # throughout and hid the bug.
                 with self._frame_lock:
                     self._frame = bgr
 

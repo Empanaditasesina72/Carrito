@@ -1,7 +1,8 @@
 """Pi AI Camera (Picamera2) capture thread for the TMR 2026 vehicle.
 
 Features:
-  - RGB888 format -> mandatory cv2.COLOR_RGB2BGR conversion for OpenCV.
+  - RGB888 format -> already BGR-ordered, NO conversion (measured; see
+    _capture_loop).
   - AE/AWB lock after a warm-up period (removes flicker).
   - Daemon thread: the main loop never waits for the previous frame.
   - Configurable resolution and FPS.
@@ -140,9 +141,12 @@ class CameraStream:
 
     def _capture_loop(self) -> None:
         while not self._stop.is_set():
-            rgb = self._picam2.capture_array()
-
-            bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+            # Picamera2's "RGB888" already hands back BGR-ordered bytes. Measured
+            # on this camera against the printed red STOP sign: the array as-is
+            # reads H=9.4 (red), and after a COLOR_RGB2BGR it reads H=110.8
+            # (cyan). Converting swaps red and blue. See vision/imx500_detector.py
+            # for the full note.
+            bgr = self._picam2.capture_array()
 
             with self._lock:
                 self._frame = bgr
