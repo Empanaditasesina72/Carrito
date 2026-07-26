@@ -75,8 +75,40 @@ CAMERA_SATURATION = 1.0
 # of its 0.55 gate while leaving the track bright enough for the HSV white
 # filter (V_min 130). Re-run the sweep if the lighting changes materially --
 # these are the correct values for THIS light, not for all light.
-CAMERA_EXPOSURE_US = 33000
-CAMERA_GAIN        = 4.0
+CAMERA_EXPOSURE_US = None
+CAMERA_GAIN        = None
+
+# Continuous exposure adaptation (vision/camera_stream.py:_adapt_exposure).
+#
+# Why not just leave the sensor's own AE running: AE targets mid-grey over the
+# whole frame, and this frame is mostly dark plastic track, so it opens up until
+# the one bright object that matters clips. Measured 2026-07-26 in daylight, the
+# red STOP octagon reached S 23.7 with 100 % of its pixels at 255 and `stop`
+# confidence read exactly 0.000. Meanwhile a value pinned for one light level
+# cannot survive the day: the same 33 ms / gain 4.0 that gave 100 % lane
+# confidence at 14:00 left a 0.0 % mask -- nothing at all -- by 15:40, a 3.4x drop
+# in scene brightness.
+#
+# So this closes the loop on OUR objective instead of the sensor's: keep the frame
+# bright enough for the lane's white lines while keeping clipping low enough that
+# the sign's red survives. Both bounds are measured, not guessed:
+#
+#   V mean 87.6 -> lane 100 %, fill 9.1 %      (14:00, sunlit)
+#   V mean 42.4 -> lane 100 %, fill 6.8 %      (~15:00, the lowest that worked)
+#   V mean 12.6 -> lane   0 %, fill 0.0 %      (15:40, dead)
+#   V mean 190  -> 23.6 % clipped, sign 0.000  (gain 22, blinded)
+#   V mean 118  -> 14.6 % clipped, sign lost at imgsz 320
+#
+# Set CAMERA_EXPOSURE_US / CAMERA_GAIN to numbers to pin them and disable this.
+CAMERA_ADAPT_ENABLED    = True
+CAMERA_ADAPT_INTERVAL_S = 1.5     # how often to re-evaluate
+CAMERA_ADAPT_V_LO       = 45.0    # below this the lane loses its lines
+CAMERA_ADAPT_V_HI       = 95.0    # above this clipping starts threatening the sign
+CAMERA_ADAPT_CLIP_MAX   = 3.0     # % of pixels at 250+; overrides the V band
+CAMERA_ADAPT_EXP_MAX_US = 33000   # 30 fps frame duration is the ceiling
+CAMERA_ADAPT_EXP_MIN_US = 200
+CAMERA_ADAPT_GAIN_MAX   = 16.0    # what this sensor's own AE reached in the dark
+CAMERA_ADAPT_GAIN_MIN   = 1.0
 CAMERA_SHARPNESS  = 4.0
 CAMERA_DENOISE    = 2
 CAMERA_BUFFERS    = 6

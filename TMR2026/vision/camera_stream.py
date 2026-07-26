@@ -24,6 +24,15 @@ try:
         CAMERA_DENOISE,
         CAMERA_EXPOSURE_US,
         CAMERA_GAIN,
+        CAMERA_ADAPT_ENABLED,
+        CAMERA_ADAPT_INTERVAL_S,
+        CAMERA_ADAPT_V_LO,
+        CAMERA_ADAPT_V_HI,
+        CAMERA_ADAPT_CLIP_MAX,
+        CAMERA_ADAPT_EXP_MAX_US,
+        CAMERA_ADAPT_EXP_MIN_US,
+        CAMERA_ADAPT_GAIN_MAX,
+        CAMERA_ADAPT_GAIN_MIN,
     )
 except ImportError:
     CAMERA_AWB_MODE   = 4
@@ -33,6 +42,15 @@ except ImportError:
     CAMERA_DENOISE    = 2
     CAMERA_EXPOSURE_US = None
     CAMERA_GAIN        = None
+    CAMERA_ADAPT_ENABLED    = True
+    CAMERA_ADAPT_INTERVAL_S = 1.5
+    CAMERA_ADAPT_V_LO       = 45.0
+    CAMERA_ADAPT_V_HI       = 95.0
+    CAMERA_ADAPT_CLIP_MAX   = 3.0
+    CAMERA_ADAPT_EXP_MAX_US = 33000
+    CAMERA_ADAPT_EXP_MIN_US = 200
+    CAMERA_ADAPT_GAIN_MAX   = 16.0
+    CAMERA_ADAPT_GAIN_MIN   = 1.0
 
 
 class CameraStream:
@@ -67,6 +85,13 @@ class CameraStream:
         self._lock  = threading.Lock()
         self._stop  = threading.Event()
         self._ready = threading.Event()
+
+        # Current sensor state, tracked so _adapt_exposure() can scale it rather
+        # than re-reading metadata (which lags a write by ~0.5 s).
+        self._exp   = 10_000.0
+        self._gain  = 2.0
+        self._last_adapt         = 0.0
+        self._adapt_settle_until = 0.0
 
         from picamera2 import Picamera2
         self._picam2 = Picamera2()
@@ -172,9 +197,80 @@ class CameraStream:
                 ctrl["ColourGains"] = tuple(cgains)
 
             self._picam2.set_controls(ctrl)
+            self._exp  = float(exp)  if exp  is not None else 10_000.0
+            self._gain = float(gain) if gain is not None else 2.0
             print(f"[CAM] AE/AWB locked ({src}) - exp={exp} us  gain={gain:.2f}")
         except Exception as e:
             print(f"[CAM] Could not lock AE/AWB: {e}")
+
+
+    def _adapt_exposure(self, frame: np.ndarray) -> None:
+        """Re-aim exposure at what the vision stack needs, not at mid-grey.
+
+        The sensor's own AE cannot do this job. It averages the whole frame, the
+        frame is mostly dark plastic track, so it opens up until the one bright
+        object that matters clips: measured in daylight, the red STOP octagon hit
+        S 23.7 with 100 % of its pixels at 255 and `stop` confidence read 0.000. But
+        a pinned value cannot survive the day either -- the same 33 ms / gain 4.0
+        that gave 100 % lane confidence at 14:00 left a completely empty mask by
+        15:40, after a 3.4x drop in scene brightness.
+
+        So the loop is closed on both objectives at once: raise the light while the
+        frame is too dark for the white lines to clear their threshold, and back off
+        whenever clipping starts to threaten the sign's red. Clipping wins over the
+        brightness band, because a clipped sign cannot be recovered downstream while
+        a slightly dark lane still can (the lane threshold is adaptive too).
+
+        Total light is exposure x gain, so the correction is applied to that product
+        and then split with exposure first -- gain only buys brightness at the cost
+        of noise, and the detector was trained on frames whose noise was measured at
+        sigma ~9.
+        """
+        if not CAMERA_ADAPT_ENABLED:
+            return
+        if CAMERA_EXPOSURE_US is not None and CAMERA_GAIN is not None:
+            return                      # both pinned by config: respect that
+
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        v    = float(gray.mean())
+        clip = 100.0 * float((gray >= 250).mean())
+
+        if clip > CAMERA_ADAPT_CLIP_MAX:
+            factor = max(0.55, 1.0 - (clip - CAMERA_ADAPT_CLIP_MAX) / 25.0)
+            why    = f"clip {clip:.1f}%"
+        elif v < CAMERA_ADAPT_V_LO:
+            target = 0.5 * (CAMERA_ADAPT_V_LO + CAMERA_ADAPT_V_HI)
+            factor = min(2.0, target / max(v, 1.0))
+            why    = f"dark V {v:.1f}"
+        elif v > CAMERA_ADAPT_V_HI:
+            target = 0.5 * (CAMERA_ADAPT_V_LO + CAMERA_ADAPT_V_HI)
+            factor = max(0.5, target / v)
+            why    = f"bright V {v:.1f}"
+        else:
+            return                      # inside the band, leave the sensor alone
+
+        prod = self._exp * self._gain * factor
+        exp  = min(CAMERA_ADAPT_EXP_MAX_US,
+                   max(CAMERA_ADAPT_EXP_MIN_US, prod / CAMERA_ADAPT_GAIN_MIN))
+        gain = min(CAMERA_ADAPT_GAIN_MAX,
+                   max(CAMERA_ADAPT_GAIN_MIN, prod / exp))
+
+        # Skip writes that would not move the sensor, so a scene sitting just
+        # outside the band does not generate I2C traffic every cycle.
+        if (abs(exp - self._exp) < 0.02 * self._exp
+                and abs(gain - self._gain) < 0.05):
+            return
+
+        try:
+            self._picam2.set_controls({"AeEnable": False,
+                                       "ExposureTime": int(exp),
+                                       "AnalogueGain": float(gain)})
+            print(f"[CAM] adapt ({why}): exp {self._exp:.0f}->{exp:.0f} us  "
+                  f"gain {self._gain:.2f}->{gain:.2f}", flush=True)
+            self._exp, self._gain = float(exp), float(gain)
+            self._adapt_settle_until = time.monotonic() + self.CONTROL_SETTLE_S
+        except Exception as e:
+            print(f"[CAM] adapt failed: {e}")
 
 
     def _capture_loop(self) -> None:
@@ -190,3 +286,12 @@ class CameraStream:
                 self._frame = bgr
 
             self._ready.set()
+
+            # Re-aim the exposure periodically. Skipped while the sensor is still
+            # adopting the last change: measured, it needs ~0.5 s, and metering a
+            # frame from before the change would make the loop chase its own tail.
+            now = time.monotonic()
+            if (now - self._last_adapt >= CAMERA_ADAPT_INTERVAL_S
+                    and now >= self._adapt_settle_until):
+                self._last_adapt = now
+                self._adapt_exposure(bgr)
