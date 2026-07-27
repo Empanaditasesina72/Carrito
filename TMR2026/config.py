@@ -43,7 +43,7 @@ SERVO_MAX_ANGLE     = 122.0
 # 7 px/s as trim walked 0 -> -6.9, i.e. it never crossed zero and the final
 # reading may be luck rather than convergence. Re-run auto_trim to confirm, and
 # treat a value near the +/-8 limit as a sign the linkage itself needs adjusting.
-SERVO_TRIM_DEG      = -6.9
+SERVO_TRIM_DEG      = -7.5
 
 STEERING_INVERTED   = True
 
