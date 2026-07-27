@@ -237,7 +237,7 @@ def verdict(stats: list[dict]) -> float | None:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--seconds", type=float, default=4.0)
-    ap.add_argument("--cruise", type=float, default=25.0)
+    ap.add_argument("--cruise", type=float, default=35.0)
     ap.add_argument("--kick", type=float, default=80.0)
     ap.add_argument("--runs", type=int, default=1)
     ap.add_argument("--no-deadband", action="store_true",

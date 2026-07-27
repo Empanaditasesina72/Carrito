@@ -53,7 +53,7 @@ from config import (PIN_MOTOR_RPWM, PIN_MOTOR_LPWM, STEER_KP, STEER_KI, STEER_KD
                     SERVO_TRIM_DEG, LANE_ERROR_OFFSET_PX, LANE_RIGHT_BIAS,
                     CAMERA_WIDTH, CAMERA_HEIGHT, CAMERA_FPS,
                     USE_IMX500_NPU, IMX500_RPK_PATH, IMX500_LABELS_PATH,
-                    IMX500_CONF)
+                    IMX500_CONF, MOTOR_MIN_MOVE_PWM)
 from hardware.motor import MotorDriver
 from hardware.steering_driver import SteeringDriver
 from vision.lane_pipeline import LanePipeline
@@ -86,7 +86,7 @@ def build_vision():
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--cruise", type=float, default=25.0)
+    ap.add_argument("--cruise", type=float, default=35.0)
     ap.add_argument("--kick", type=float, default=80.0)
     ap.add_argument("--timeout", type=float, default=45.0)
     ap.add_argument("--park-after", type=float, default=3.0,
@@ -145,7 +145,7 @@ def main() -> int:
     # marginal detection flickers off, cruise resumes, and the log fills with
     # CRUCERO<->PRECAUCION. Keep it close to cruise; the braking distance is set
     # by SIGN_BBOX_STOP_MM, not by crawling up to the sign.
-    fsm.PRECAUCION_PWM = max(20.0, args.cruise * 0.85)
+    fsm.PRECAUCION_PWM = max(MOTOR_MIN_MOVE_PWM + 3.0, args.cruise * 0.85)
     fsm.activate()
 
     t0 = last = time.monotonic()

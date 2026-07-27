@@ -228,6 +228,15 @@ VEL_STOP_KP = 0.035
 VEL_STOP_KI = 0.001
 VEL_STOP_KD = 0.008
 
+# Lowest duty at which this car actually moves, MEASURED 2026-07-27 by stepping
+# the H-bridge and watching the camera for motion (30/45/60/80/95 %):
+#     30 % -> moves      everything below it -> stalls
+# This is why a full-sequence attempt at cruise 25 % never moved: the launch kick
+# lasted ~0.15 s before the ramp pulled the duty back under the threshold, and
+# the car sat still while every metric reported flawless tracking. Never command
+# a sustained duty below this and expect the car to keep rolling.
+MOTOR_MIN_MOVE_PWM = 30.0
+
 SPEED_STRAIGHT   = 22
 SPEED_CURVE      = 15
 SPEED_APPROACH   = 10
