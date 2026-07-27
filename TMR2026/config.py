@@ -260,7 +260,11 @@ LANE_MIN_CONFIDENCE = 0.20
 #     separation 385 px -> raw error +28.5   <- the true full-lane lock
 # So a calibration taken during a partial or mis-paired lock is simply wrong, and no
 # single additive constant can serve both lock modes. Check the separation first.
-LANE_ERROR_OFFSET_PX = 28.5
+# Re-measured 2026-07-27 with the car centred in the RIGHT LANE and the target
+# rule at LANE_RIGHT_BIAS=0.74. The previous 28.5 was taken with the target at
+# the centre of the whole ROAD (bias 0.50), which is a different physical place,
+# so it no longer applied. Settled reading was +30.0 px on top of that 28.5.
+LANE_ERROR_OFFSET_PX = 58.5
 
 STOP_BRAKE_START_MM  = 700
 STOP_TARGET_MM       = 270
