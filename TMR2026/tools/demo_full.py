@@ -92,6 +92,9 @@ def main() -> int:
     ap.add_argument("--park-after", type=float, default=3.0,
                     help="seconds of REANUDAR before handing over to parking")
     ap.add_argument("--no-park", action="store_true")
+    ap.add_argument("--no-prompt", action="store_true",
+                    help="skip the Enter prompt and count down instead, so the "
+                         "run can be launched over SSH with no terminal")
     args = ap.parse_args()
 
     print("=" * 66)
