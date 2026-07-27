@@ -92,6 +92,11 @@ def main() -> int:
     ap.add_argument("--park-after", type=float, default=3.0,
                     help="seconds of REANUDAR before handing over to parking")
     ap.add_argument("--no-park", action="store_true")
+    ap.add_argument("--return-secs", type=float, default=0.0,
+                    help="after the stop is served, reverse for this many "
+                         "seconds to head back to the start line. Judged by the "
+                         "sign distance, which must GROW if reverse works.")
+    ap.add_argument("--return-duty", type=float, default=70.0)
     ap.add_argument("--no-prompt", action="store_true",
                     help="skip the Enter prompt and count down instead, so the "
                          "run can be launched over SSH with no terminal")
@@ -217,6 +222,12 @@ def main() -> int:
                           + (f", senal a {d:.0f} mm" if d else "")
                           + " -- esperando 5 s\n")
                 if fsm.state == FSMState.REANUDAR and phase == "ALTO":
+                    if args.return_secs > 0:
+                        phase = "REGRESA"
+                        print(f"\n[FASE 3] REGRESA en t={el:.1f} s "
+                              f"-- reversa {args.return_duty:.0f}% "
+                              f"por {args.return_secs:.1f} s\n")
+                        break
                     phase = "REANUDA"
                     stop_served_at = now
                     print(f"\n[FASE 3] REANUDA en t={el:.1f} s\n")
@@ -239,6 +250,47 @@ def main() -> int:
             time.sleep(max(0.0, (1.0 / LOOP_HZ) - (time.monotonic() - now)))
         else:
             print(f"\n[DEMO] tope de {args.timeout:.0f} s alcanzado.")
+
+        # Return leg, open loop and INSIDE the try so the camera is still up to
+        # measure it. Reversing has no lane reference -- the camera faces
+        # forward -- and there is no rear sensor, so it cannot be closed-loop
+        # like the approach: it is a timed move, and the only honest way to
+        # report it is whether the sign actually receded.
+        if phase == "REGRESA":
+            def _sign_cm(secs=2.0):
+                vals, tt = [], time.monotonic()
+                while time.monotonic() - tt < secs:
+                    f = camera.get_frame()
+                    if f is not None and sign_det is not camera:
+                        sign_det.update_frame(f)
+                    d = sign_det.closest_sign("stop_sign")
+                    if d and d.distance_m:
+                        vals.append(d.distance_m * 100.0)
+                    time.sleep(0.05)
+                return float(np.median(vals)) if vals else None
+
+            fsm.deactivate()
+            before = _sign_cm()
+            print("  senal antes de retroceder: "
+                  + (f"{before:.1f} cm" if before else "no visible"))
+            steering.center()
+            motor.set_speed(-abs(args.return_duty))
+            t_rev = time.monotonic()
+            while time.monotonic() - t_rev < args.return_secs:
+                time.sleep(0.05)
+            motor.brake()
+            time.sleep(1.0)
+            after = _sign_cm()
+            print("  senal despues: "
+                  + (f"{after:.1f} cm" if after else "no visible"))
+            if before and after:
+                back = after - before
+                print(f"\n  RETROCESO MEDIDO: {back:+.1f} cm")
+                if back >= 4.0:
+                    print("  -> la reversa SI funciono.")
+                else:
+                    print("  -> la reversa NO movio el carro. El lado LPWM del")
+                    print("     puente H no conduce: es hardware.")
     except KeyboardInterrupt:
         print("\n[DEMO] abortado por el usuario.")
     finally:
