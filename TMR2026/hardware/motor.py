@@ -21,16 +21,30 @@ import threading
 import time
 from typing import Optional
 
+# lgpio FIRST. On a Pi 5 RPi.GPIO has no hardware PWM and falls back to a
+# Python-timed software one, whose effective duty collapses when the CPU is
+# busy -- and this vehicle runs YOLO on the CPU. Measured 2026-07-27: driving
+# the H-bridge directly through lgpio at 45 % moved the car, while the same 45 %
+# through MotorDriver on RPi.GPIO left it stationary for seven seconds with the
+# detector running. The vehicle only ever moved in tests where nothing else was
+# competing for the core.
+#
+# lgpio drives the BCM2712 PWM peripheral, so its duty is immune to load.
+# CLAUDE.md already documented lgpio as the intended path with RPi.GPIO as the
+# fallback; this module had the order inverted.
 try:
-    import RPi.GPIO as _GPIO
-    _GPIO.setmode(_GPIO.BCM)
-    _GPIO.setwarnings(False)
-    _BACKEND = "RPi.GPIO"
-except (ImportError, RuntimeError):
+    import lgpio as _lgpio
+    _lgpio.gpiochip_close(_lgpio.gpiochip_open(4))   # prove chip 4 is reachable
+    _BACKEND = "lgpio"
+except Exception:
     try:
-        import lgpio as _lgpio
-        _BACKEND = "lgpio"
-    except ImportError:
+        import RPi.GPIO as _GPIO
+        _GPIO.setmode(_GPIO.BCM)
+        _GPIO.setwarnings(False)
+        _BACKEND = "RPi.GPIO"
+        print("[MOTOR] WARNING: lgpio no disponible -> PWM POR SOFTWARE. "
+              "La potencia real caera cuando el CPU este cargado.")
+    except (ImportError, RuntimeError):
         _BACKEND = "mock"
 
 _PWM_FREQ = 1_000
