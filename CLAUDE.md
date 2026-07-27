@@ -61,18 +61,70 @@ hence 362 and 412 mm. `SIGN_LOST_COAST_S = 0.6` now dead-reckons across the blin
 stretch (~9 cm at the measured 15 cm/s). **Moving the sign closer to the lane edge
 is the physical fix**: it stays in frame longer and the stop tightens toward 270.
 
+### Paper status — WITCOM 2026 / Springer CCIS, paper 2069
+
+Scores were 0/1/1 and all three reviewers said the same thing in different words:
+no physical validation. `docs/RESPONSE_TO_REVIEWERS.md` lists the ten changes
+promised in the rebuttal. Nine are done.
+
+| # | Promised | State |
+|---|---|---|
+| 1 | Reframe Sim2Real → SIL | text edit, wording in `docs/paper_snippets.md` |
+| 2 | On-device latency + distribution | ✅ 3.83 ms mean, p99 6.16, 0 deadline misses / 999 cycles |
+| **3** | **10 physical braking trials ± std** | 🔴 **THE ONLY BLOCKER** |
+| 4 | Table 2 → test matrix | ✅ `docs/TEST_MATRIX.md`, 9 rows + LaTeX |
+| 5 | Fix 20 ms vs 200 ms | text edit |
+| 6 | Error against the ±30 mm band | depends on #3 |
+| 7 | Perception metrics + CPU/NPU | ✅ 100 % recall, conf 0.824, 0 FP |
+| 8 | PID equations, gains, limitations | ✅ all measured on the car |
+| 9 | Figures ≥300 dpi + hardware photo | ✅ `Desktop/TMR2026_figuras/` (16 MP, 2 annotated) |
+| 10 | Tagged release + DOI | pending, ~1 h of admin |
+
+**Without #3 the rebuttal promises something that was never done** — worse than not
+promising it. It is no longer a technical risk: the car drove, detected and braked.
+
+Two things to settle before submitting:
+- **P4 contradicts itself.** CPU inference measured 81.3 ms (2026-07-25) and
+  64.4 ms (2026-07-27), same model and imgsz — probably the CPU governor or the
+  retrained weights. Re-run `tools/bench_ablation.py` and quote ONE figure.
+- **The shipped config is the CPU path.** `USE_IMX500_NPU=False` because the .rpk
+  has the channel swap baked in. The P4 numbers stand, but the text must say so.
+
 ### Next steps
 
 1. Charge the motor battery.
-2. 2–3 runs, measure lens→octagon face with a tape, tune `SIGN_LOST_COAST_S` to
-   centre on 270 mm.
-3. The 10 P2 trials. `tools/bench_braking_physical.py` persists each row with
-   fsync, so a crash no longer loses them.
-4. Record with the DJI **lateral to the track, at car height** — that angle shows
-   straightness and the stop point; head-on or overhead do not.
-5. Only if LPWM gets fixed: parking.
+2. Move the sign closer to the lane edge — it is what tightens the stop (see the
+   LENS section above), and it costs nothing.
+3. 2–3 pilot runs, tape-measure lens→octagon, tune `SIGN_LOST_COAST_S` to centre
+   on 270 mm.
+4. The 10 P2 trials. `tools/bench_braking_physical.py` fsyncs each row, so a crash
+   no longer loses them. Only `stop_reason == braked` counts.
+5. Record with the DJI **lateral to the track, at car height**.
+6. Only if the LPWM leg gets fixed: parking.
 
 **Standing decision:** all training on the PC GPU; the Pi converts, tests and runs.
+
+### Detector — deployed 2026-07-27
+
+`weights/tmr_signs.pt`, 131 epochs at imgsz 320 (the production size; 640 costs
+185 ms on the Pi against a 66 ms budget). On `car_hard` — 294 degraded frames of
+the untouched Roboflow test split — **100 % recall at the 0.55 gate, mean
+confidence 0.824, 0 false positives**, up from 0.767 / 1 FP.
+
+Deployed `last.pt`, NOT `best.pt`. Ultralytics picks best.pt by validation mAP,
+which was at its ceiling (0.995) from epoch 2 because training starts from an
+already-converged model — best.pt was written at epoch 2 and never updated across
+the remaining 129. Always rank with `tools/eval_hard.py`, which measures what the
+FSM actually consumes, instead of trusting the checkpoint labelled "best".
+
+Synthetic signs are generated in the band where braking is actually decided
+(0.40–1.30 m = 32–104 px), not the far range: past 1.3 m nothing is reliably
+detected, and closer than 43 cm the sign is out of frame.
+
+**The printed sign is under-saturated** — measured on the Sony RAWs, H=173, S≈150,
+V≈215, where a regulation red sits above S 180. That is why it reads as pink and
+why on-track confidence ranges 56–81 %. Reprinting it in a stronger red will do
+more than any retraining.
 
 ### Instrumentation lessons that cost hours today — do not repeat them
 
