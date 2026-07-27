@@ -170,10 +170,23 @@ LANE_MIN_CONFIDENCE = 0.20
 # trapezoid is not perfectly symmetric about the lens axis. At
 # BEV_SCALE_PX_PER_CM = 6.8 px/cm, every 68 px is 10 cm the follower would
 # otherwise hold off-centre on purpose.
-# Re-measure after remounting the camera: centre the car in the lane by hand, run
+# HOW TO RE-MEASURE -- and the trap in it. Centre the car in the lane by hand, run
 #   python tools/diag_track.py --frames 12
-# and put the reported mean error_px here. Positive means the pipeline reads high.
-LANE_ERROR_OFFSET_PX = 58.7
+# and use the SETTLED error_px (the EMA ramps over the first frames, so the run mean
+# understates it). Positive means the pipeline reads high.
+#
+# Only trust the reading when the reported line separation is close to the expected
+# 384 px. This value moved four times on 2026-07-26 -- +50, +44, +30.6, +58.7 -- and
+# the reason was not the camera. The bias depends on WHICH pair of lines the sliding
+# windows locked onto: at separation 327 px it was tracking something narrower than
+# the lane (most likely the dashed centre line instead of the left solid) and the
+# centre of that pair sits somewhere else entirely. Measured back to back, centred
+# both times:
+#     separation 327 px -> raw error +58.7
+#     separation 385 px -> raw error +28.5   <- the true full-lane lock
+# So a calibration taken during a partial or mis-paired lock is simply wrong, and no
+# single additive constant can serve both lock modes. Check the separation first.
+LANE_ERROR_OFFSET_PX = 28.5
 
 STOP_BRAKE_START_MM  = 700
 STOP_TARGET_MM       = 270
