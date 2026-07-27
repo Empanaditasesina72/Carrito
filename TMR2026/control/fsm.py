@@ -117,6 +117,12 @@ class AutonomousFSM:
     # into the sign; one trial ended 140 mm from it without ever braking.
     SIGN_LOST_NEAR_MM = 600
 
+    # How long the sign must stay UNSEEN before PRECAUCION gives up and returns
+    # to cruise. Without it a detection sitting near its 0.55 gate -- 0.56-0.57
+    # is what this sign reads at 1 m -- toggles the state every few frames, and
+    # the log fills with CRUCERO<->PRECAUCION while the car surges and crawls.
+    SIGN_LOST_GRACE_S = 0.6
+
     def __init__(self, motor, steering, pid, signals=None, brake_light=None):
         """
         Parameters
@@ -144,6 +150,7 @@ class AutonomousFSM:
         self._espera_start   = 0.0
         self._last_sign_mm: Optional[float] = None
         self._correcting     = False   # deadband hysteresis state
+        self._sign_lost_at: Optional[float] = None
         self._last_cmd_angle = self.SERVO_CENTER
         self._cooldown_until = 0.0
         self._resume_speed   = 0.0
@@ -157,6 +164,7 @@ class AutonomousFSM:
         self._state        = FSMState.CRUCERO
         self._resume_speed = 0.0
         self._last_sign_mm = None
+        self._sign_lost_at = None
         self._active       = True
         self._apply_lights()
         print("[FSM] Autonomous mode ENABLED")
@@ -224,7 +232,16 @@ class AutonomousFSM:
         if self.sign_distance_mm is not None:
             self._last_sign_mm = self.sign_distance_mm
 
-        if not self.sign_visible:
+        if self.sign_visible:
+            self._sign_lost_at = None
+        elif self._sign_lost_at is None:
+            self._sign_lost_at = time.monotonic()
+
+        lost_long_enough = (self._sign_lost_at is not None and
+                            time.monotonic() - self._sign_lost_at
+                            >= self.SIGN_LOST_GRACE_S)
+
+        if not self.sign_visible and lost_long_enough:
             near = (self._last_sign_mm is not None
                     and self._last_sign_mm <= self.SIGN_LOST_NEAR_MM)
             if near:
@@ -233,6 +250,7 @@ class AutonomousFSM:
                 self._transition(FSMState.FRENADO)
             else:
                 self._last_sign_mm = None
+                self._sign_lost_at = None
                 self._transition(FSMState.CRUCERO)
             return
 

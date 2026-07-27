@@ -140,6 +140,12 @@ def main() -> int:
     motion.finish_calibration()
 
     fsm.MAX_AUTO_PWM = float(args.cruise)
+    # PRECAUCION defaults to 20 % PWM, which is at or below this motor's stall
+    # threshold: the moment the sign is seen the car slows to a standstill, the
+    # marginal detection flickers off, cruise resumes, and the log fills with
+    # CRUCERO<->PRECAUCION. Keep it close to cruise; the braking distance is set
+    # by SIGN_BBOX_STOP_MM, not by crawling up to the sign.
+    fsm.PRECAUCION_PWM = max(20.0, args.cruise * 0.85)
     fsm.activate()
 
     t0 = last = time.monotonic()
@@ -191,8 +197,14 @@ def main() -> int:
                 # the car sits still. Re-kick rather than time out on a run that
                 # measured nothing. Never during a braking state -- brake() must
                 # win.
+                # PRECAUCION is included: it is not a braking state, and the
+                # car spends most of an approach in it. Excluding it meant the
+                # re-kick never fired exactly when the duty was lowest and a
+                # stall was most likely. FRENADO and ESPERA stay excluded --
+                # brake() must always win.
                 if (not motion.update(frame) and el > 1.0 and now >= next_rekick
-                        and fsm.state in (FSMState.CRUCERO, FSMState.REANUDAR)
+                        and fsm.state in (FSMState.CRUCERO, FSMState.PRECAUCION,
+                                          FSMState.REANUDAR)
                         and args.kick > 0):
                     motor.kick(args.kick, 0.0)
                     next_rekick = now + 0.5
