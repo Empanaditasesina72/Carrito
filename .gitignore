@@ -43,3 +43,7 @@ TMR2026/weights/drive_net.onnx
 TMR2026/weights/drive_net.ncnn.*
 TMR2026/weights/drive_eval.png
 TMR2026/weights/drive_train.png
+
+# Pretrained checkpoints Ultralytics downloads on demand (22 MB+). Regenerable.
+yolov8*.pt
+yolo11*.pt
