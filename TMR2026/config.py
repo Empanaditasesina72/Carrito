@@ -173,6 +173,15 @@ STEER_KD = 0.0
 # track_calib.json was doing.
 LANE_RIGHT_BIAS = 0.74
 
+# Width of the lane the car actually drives in (dashed centre -> right solid).
+# The road has THREE lines, so the sliding windows return one of two pairs:
+#   left solid <-> right solid  = 0.565 m -> 384 px, aim at LANE_RIGHT_BIAS
+#   dashed     <-> right solid  = 0.290 m -> 197 px, aim at 50 %
+# Both put the car in the same physical place and agree to 1.5 px. Recognising
+# only the wide pair loses the dashed line entirely, because a car correctly
+# inside the right lane puts the LEFT SOLID at BEV x~35 -- outside the window.
+LANE_DRIVEN_WIDTH_M = 0.290
+
 # Pure-pursuit lookahead, as a fraction of the bird's-eye view height measured
 # from the bottom. 0.70 aims near the far end of the view (~0.8 m ahead), which
 # is what STEER_KP is sized for. Raise if the car weaves, lower if it reacts
