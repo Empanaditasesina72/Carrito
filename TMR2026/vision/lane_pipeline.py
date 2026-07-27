@@ -46,6 +46,9 @@ class LaneResult:
     """Result of the lane-detection pipeline."""
     error_px:    float
     confidence:  float
+    # Lane lean in pseudo-degrees; >0 = lines lean right going up = the car's
+    # nose points left of the road and must steer right. 0.0 when unknown.
+    heading:     float = 0.0
     left_x:      Optional[int] = None
     right_x:     Optional[int] = None
     bev_frame:   Optional[np.ndarray] = None
@@ -355,6 +358,11 @@ class LanePipeline:
         win_h        = h // self.N_WINDOWS
         left_centers  = []
         right_centers = []
+        # Window index of each accepted centre (0 = bottom). The slope of x over
+        # these indices is the line's lean, i.e. the car's heading error --
+        # information the windows were already computing and then throwing away.
+        left_idx  = []
+        right_idx = []
 
         cur_left  = left_x
         cur_right = right_x
@@ -372,6 +380,7 @@ class LanePipeline:
                     pts  = np.where(win_l > 0)[1]
                     cur_left = int(np.mean(pts)) + xl_lo
                     left_centers.append(cur_left)
+                    left_idx.append(i)
 
             if has_right:
                 xr_lo = max(0, cur_right - self.WIN_MARGIN)
@@ -382,8 +391,29 @@ class LanePipeline:
                     pts   = np.where(win_r > 0)[1]
                     cur_right = int(np.mean(pts)) + xr_lo
                     right_centers.append(cur_right)
+                    right_idx.append(i)
 
         frame_cx = w / 2.0
+
+        # --- Heading: how much the lines LEAN, from the slope of the window
+        # centres. Lateral offset alone cannot damp a heading disturbance: the
+        # controller only reacts once the car has already translated sideways,
+        # which at cruise speed means it weaves or drifts out before converging.
+        # Window index runs bottom -> top, so a POSITIVE slope means the lines
+        # lean right going up, i.e. the car's nose points LEFT of the road axis
+        # and it must steer RIGHT. Pseudo-degrees: the BEV's vertical scale is
+        # not calibrated to its horizontal one, so the magnitude is only
+        # proportional to the true angle -- the consumer's gain absorbs that.
+        def _lean(idx, xs):
+            if len(xs) < 3:
+                return None
+            return float(np.polyfit(np.asarray(idx, np.float64),
+                                    np.asarray(xs, np.float64), 1)[0])
+
+        leans = [s for s in (_lean(left_idx, left_centers),
+                             _lean(right_idx, right_centers)) if s is not None]
+        heading = (float(np.degrees(np.arctan2(np.mean(leans), float(win_h))))
+                   if leans else 0.0)
         bias     = self._right_bias
 
         if left_centers and right_centers:
@@ -407,6 +437,7 @@ class LanePipeline:
                     right_x_avg = int(mean_r)
                 error = float(lane_cx - frame_cx)
                 return LaneResult(error_px=error, confidence=confidence,
+                                  heading=heading,
                                   left_x=left_x_avg, right_x=right_x_avg)
 
             lane_cx    = mean_l + bias * (mean_r - mean_l)
@@ -431,6 +462,7 @@ class LanePipeline:
         return LaneResult(
             error_px   = error,
             confidence = float(confidence),
+            heading    = heading,
             left_x     = left_x_avg if left_centers else None,
             right_x    = right_x_avg if right_centers else None,
         )

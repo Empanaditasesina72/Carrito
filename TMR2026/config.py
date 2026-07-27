@@ -150,6 +150,23 @@ STEER_KP = 0.09
 STEER_KI = 0.002
 STEER_KD = 0.025
 
+# Heading feedforward (Stanley-style) on top of the lateral PID, in degrees of
+# servo per pseudo-degree of lane lean (LaneResult.heading). Why it exists: the
+# lateral term only reacts AFTER the car has translated sideways, so any yaw --
+# from the launch kick, a floor seam, or steering trim -- turns into a drift the
+# PID chases instead of preventing. The integrator cannot help within a run: at
+# Ki=0.002, cancelling a 6 deg trim bias needs ~40 s of accumulation, and a
+# braking run lasts 3 s. Heading feedback closes that hole.
+#
+# DEFAULT 0.0 = DISABLED, deliberately: the sign of the heading estimate has not
+# been confirmed on the car yet, and if it is inverted this becomes positive
+# feedback that throws the car off the track. Enable procedure:
+#   1. place the car on the lane rotated ~15 deg with the nose to the LEFT
+#   2. python tools/diag_track.py --frames 8  -> heading column must be POSITIVE
+#   3. nose to the RIGHT -> heading must be NEGATIVE
+#   4. only then set 1.5 here, and raise toward 2.5 if it still weaves
+STEER_HEADING_GAIN = 0.0
+
 VEL_STOP_KP = 0.035
 VEL_STOP_KI = 0.001
 VEL_STOP_KD = 0.008

@@ -140,8 +140,8 @@ def main() -> int:
 
     interval = args.interval if args.interval else 1.0 / CAMERA_FPS
     print()
-    print(f"{'#':>3} {'error_px':>9} {'conf':>6} {'left_x':>7} {'right_x':>8}  "
-          f"{'lines':<11} signs")
+    print(f"{'#':>3} {'error_px':>9} {'head':>6} {'conf':>6} {'left_x':>7} "
+          f"{'right_x':>8}  {'lines':<11} signs")
     print("-" * 78)
 
     results, last, best = [], None, 0
@@ -170,8 +170,8 @@ def main() -> int:
                 for d in live[:3])
         else:
             sg = "-"
-        print(f"{i:>3} {r.error_px:>+9.1f} {r.confidence:>6.0%} {lx:>7} {rx:>8}  "
-              f"{which:<11} {sg}")
+        print(f"{i:>3} {r.error_px:>+9.1f} {r.heading:>+6.1f} {r.confidence:>6.0%} "
+              f"{lx:>7} {rx:>8}  {which:<11} {sg}")
         time.sleep(interval)
 
     if not results:

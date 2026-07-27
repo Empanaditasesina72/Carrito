@@ -42,6 +42,11 @@ except ImportError:
     _CFG_LANE_MIN_CONF = 0.20
 
 try:
+    from config import STEER_HEADING_GAIN as _CFG_STEER_HEADING_GAIN
+except ImportError:
+    _CFG_STEER_HEADING_GAIN = 0.0
+
+try:
     from config import (
         SERVO_CENTER_ANGLE as _CFG_SERVO_CENTER,
         SERVO_MIN_ANGLE    as _CFG_SERVO_MIN,
@@ -85,6 +90,7 @@ class AutonomousFSM:
     ESPERA_S        = 5.0
     COOLDOWN_S      = 3.0
     MIN_LANE_CONF   = _CFG_LANE_MIN_CONF
+    HEADING_GAIN    = _CFG_STEER_HEADING_GAIN
 
     SERVO_CENTER    = _CFG_SERVO_CENTER
     SERVO_MIN       = _CFG_SERVO_MIN
@@ -112,6 +118,7 @@ class AutonomousFSM:
 
         self.lane_error:      float           = 0.0
         self.lane_conf:       float           = 0.0
+        self.lane_heading:    float           = 0.0
         self.lidar_mm:        Optional[float] = None
         self.sign_visible:    bool            = False
         self.sign_distance_mm:Optional[float] = None
@@ -267,6 +274,23 @@ class AutonomousFSM:
         # convention (angle = centre + kp * error) but nothing calls it, which is
         # why the contradiction sat here unnoticed.
         angle = self.SERVO_CENTER - correction
+
+        # Heading feedforward (Stanley-style second term). Lateral error alone
+        # cannot damp a heading disturbance: the controller only reacts after the
+        # car has already translated sideways, so a run that starts with any yaw
+        # -- or picks one up from a trim bias -- weaves or drifts out before the
+        # lateral term converges. lane_heading > 0 means the lines lean right in
+        # the BEV, i.e. the nose points left of the road, i.e. steer right --
+        # which in the verified convention is an angle ABOVE centre, hence `+`.
+        #
+        # STEER_HEADING_GAIN defaults to 0.0 (term disabled) because the sign of
+        # the heading estimate has not yet been confirmed on the car, and with
+        # the sign wrong this is positive feedback that would throw the car off
+        # the track. To enable: place the car rotated ~15 deg on the lane, run
+        # tools/diag_track.py, confirm the reported heading sign matches the
+        # rotation (nose left => heading positive), then set the gain (start 1.5).
+        if self.lane_conf >= self.MIN_LANE_CONF and self.HEADING_GAIN > 0.0:
+            angle += self.HEADING_GAIN * self.lane_heading
         angle = max(self.SERVO_MIN, min(self.SERVO_MAX, angle))
         self.steering.set_angle(angle)
 

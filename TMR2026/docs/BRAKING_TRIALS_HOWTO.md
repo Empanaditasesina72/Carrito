@@ -48,6 +48,27 @@ see it for the whole approach; it does not need to see it from the start line.
 **5. WHEELS OFF THE GROUND FIRST.** Run one trial holding the car up. Confirm the
 wheels spin, then stop when the sign is seen. Only then put it on the track.
 
+**6. STEERING TRIM — do this before any driving session.** The first real session
+(2026-07-26) ended with the car diagonal across the lane, and the numbers say why a
+crooked car cannot be fixed by the controller alone: a trim bias of `b` degrees
+leaves a standing offset of `b / Kp` pixels (6° → 75 px ≈ 11 cm, at the lane edge),
+and the integrator at Ki=0.002 needs ~40 s to cancel what a 3 s run gives it. The
+bias must be removed at the servo, not fought by the PID:
+
+```bash
+# 1) Push test, motor off: roll the car 2 m by hand. If it curves on its own,
+#    the problem is mechanical (tie rod), not software.
+# 2) Powered trim: short bursts, adjust until it tracks straight, then persist
+#    the winning value in config.py:SERVO_TRIM_DEG.
+python tools/trim_steering.py --drive --seconds 1.5 --cruise 25 --kick 60
+```
+
+**7. Heading feedforward (optional, after trim).** The pipeline now measures the
+lane's lean (`heading` column in diag_track) and the FSM can steer on it —
+`config.py:STEER_HEADING_GAIN`, shipped disabled. Enable ONLY after confirming the
+sign on the car: nose rotated left ⇒ `head` positive, nose right ⇒ negative. With
+the sign wrong it is positive feedback. Start at 1.5.
+
 ---
 
 ## The command

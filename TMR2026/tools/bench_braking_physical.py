@@ -95,9 +95,18 @@ def run_trial(fsm, camera, sign_det, sensor, cruise_pwm, max_drive_s,
               kick_pwm=0.0, kick_s=0.25, lane_pipe=None) -> dict:
     fsm.MAX_AUTO_PWM = float(cruise_pwm)      # cap cruise speed for safety
     fsm.PRECAUCION_PWM = min(fsm.PRECAUCION_PWM, cruise_pwm * 0.6)
-    if kick_pwm > 0:
-        fsm.motor.kick(kick_pwm, kick_s)
     fsm.activate()
+
+    # The kick used to run BEFORE activate(), as motor.kick() blocking for its
+    # whole duration -- so the most violent 0.25 s of the run, a 60 % launch,
+    # happened with NO steering control at all. Any trim bias yawed the car
+    # right at the start, and the controller then began the run already carrying
+    # a heading error it can barely observe (the pipeline measures lateral
+    # offset, not heading). Trial photos showed exactly that: the car diagonal
+    # across the lane. Now the kick is a phase INSIDE the control loop: each
+    # tick re-applies the kick duty (kick() with seconds=0 bypasses the
+    # soft-start ramp without sleeping), while fsm.update() keeps steering.
+    kick_until = time.monotonic() + kick_s if kick_pwm > 0 else 0.0
 
     t0 = time.monotonic()
     t_last = t0
@@ -133,15 +142,22 @@ def run_trial(fsm, camera, sign_det, sensor, cruise_pwm, max_drive_s,
             lane = lane_pipe.process(frame)
             fsm.lane_error = lane.error_px
             fsm.lane_conf = lane.confidence
+            fsm.lane_heading = lane.heading
         else:
             fsm.lane_error = 0.0
             fsm.lane_conf = 1.0
+            fsm.lane_heading = 0.0
         fsm.lidar_mm = front
         fsm.sign_visible = (sign_det.has_sign("stop_sign") or sign_det.has_sign("red"))
         closest = sign_det.closest_sign("stop_sign") or sign_det.closest_sign("red")
         fsm.sign_distance_mm = (closest.distance_m * 1000.0
                                 if closest and closest.distance_m else None)
         fsm.update(dt)
+
+        # Only while cruising: if the FSM has already moved to braking, its
+        # brake() must never be overridden by a late kick tick.
+        if now < kick_until and fsm.state == FSMState.CRUCERO:
+            fsm.motor.kick(kick_pwm, 0.0)
 
         if fsm.state in (FSMState.ESPERA,):       # the controller has stopped
             espera_ticks += 1
@@ -273,6 +289,25 @@ def main() -> int:
         sign_det.start()
     steering.center()
 
+    # The CSV is written INCREMENTALLY, one row per trial, fsync'd. It used to be
+    # written once at the very end, so anything that killed the process before
+    # that point -- an uncaught exception, a dropped SSH session, a power cut --
+    # discarded every measurement the operator had already typed in. That is not
+    # hypothetical: the first real 10-trial session on 2026-07-26 ended with no
+    # CSV on disk and the numbers surviving only in a terminal scrollback.
+    os.makedirs(os.path.dirname(args.out), exist_ok=True)
+    fieldnames = ["trial", "stopped_mm", "min_mm", "overshoot", "within_tol",
+                  "duration_s", "stop_reason", "source"]
+    csv_f = open(args.out, "w", newline="", encoding="utf-8")
+    csv_w = csv.DictWriter(csv_f, fieldnames=fieldnames)
+    csv_w.writeheader()
+    csv_f.flush()
+
+    def persist(row: dict) -> None:
+        csv_w.writerow(row)
+        csv_f.flush()
+        os.fsync(csv_f.fileno())
+
     results = []
     try:
         for k in range(1, args.trials + 1):
@@ -295,9 +330,16 @@ def main() -> int:
                                    if m is not None else "")
             print(f"  -> stopped {r['stopped_mm']} mm  (min {r['min_mm']} mm, "
                   f"within tol: {r['within_tol']}, {r['stop_reason']})")
+            # THE data-loss bug of the first real session: this append (and any
+            # write) was simply missing, so every trial was measured, printed and
+            # then dropped -- the end-of-run block wrote an empty list. Each row
+            # now also goes to disk immediately.
+            results.append(r)
+            persist(r)
     except KeyboardInterrupt:
         print("\n[BRAKE] Aborted by user.")
     finally:
+        csv_f.close()
         motor.brake()
         steering.center()
         time.sleep(0.1)
@@ -309,13 +351,7 @@ def main() -> int:
         motor.cleanup()
 
     if results:
-        os.makedirs(os.path.dirname(args.out), exist_ok=True)
-        with open(args.out, "w", newline="", encoding="utf-8") as f:
-            w = csv.DictWriter(f, fieldnames=["trial", "stopped_mm", "min_mm",
-                                              "overshoot", "within_tol", "duration_s",
-                                              "stop_reason", "source"])
-            w.writeheader()
-            w.writerows(results)
+        # Rows are already on disk (persisted per trial); this is summary only.
         dists = [r["stopped_mm"] for r in results if isinstance(r["stopped_mm"], (int, float))]
         oks = sum(1 for r in results if r["within_tol"] is True)
         braked = sum(1 for r in results if r["stop_reason"] == "braked")

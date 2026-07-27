@@ -546,6 +546,7 @@ class VehicleTMR:
         self.sign_det.update_frame(frame)
 
         self.fsm.lane_error   = self._last_lane.error_px
+        self.fsm.lane_heading = self._last_lane.heading
         self.fsm.lane_conf    = self._last_lane.confidence
         self.fsm.lidar_mm     = self.sensor.front_mm
 
