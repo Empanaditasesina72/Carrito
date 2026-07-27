@@ -228,24 +228,24 @@ VEL_STOP_KP = 0.035
 VEL_STOP_KI = 0.001
 VEL_STOP_KD = 0.008
 
-# Lowest SUSTAINED duty that moves this car. Measured 2026-07-27 by driving the
-# H-bridge directly and watching the camera, 2.5 s per step:
-#     35 % 1.58 (marginal)   40 % 2.47   45 % 2.68   50 % 3.28   60 % 3.12
-#     against a 1.57 motion threshold
+# Lowest duty that actually advances the car. Measured 2026-07-27 by driving the
+# H-bridge directly, 1.4 s per burst, judged by the SIGN DISTANCE (YOLO bbox
+# through the pinhole model) -- never by frame differencing, which reported
+# motion at every duty on a stationary car because chassis vibration displaces
+# each frame by a few pixels at random:
+#     20 % -> +20.8 cm    25 % -> +24.6 cm    30 % -> +22.1 cm
+#     104 cm to 36 cm of approach in three bursts
 #
-# An earlier reading of 30 % came from 0.9 s bursts measured by a detector that
-# compares against a frame 1.0 s old -- the burst was shorter than the
-# measurement window, so it could not have detected motion at any duty. That
-# whole sweep was an artefact of its own test.
-#
-# Cruise must sit clearly above this. A run at 25 % never moved at all: the
-# launch kick lasts ~0.15 s before the ramp pulls the duty back under threshold.
-MOTOR_MIN_MOVE_PWM = 35.0
+# WITH the spare battery sitting on the chassis this same car would not move at
+# 95 %. The load, not the duty, was the whole problem: every "the motor has no
+# torque" conclusion earlier in the day was measured under that extra weight.
+# Keep the chassis light.
+MOTOR_MIN_MOVE_PWM = 20.0
 
-# REVERSE IS DEAD ON THIS CHASSIS. Measured the same way, driving LPWM instead of
-# RPWM: 60 % -> 0.351, 80 % -> 0.235, 95 % -> 0.238, all at the noise floor,
-# while forward at the same duty reads 3.1. The motor does not respond to the
-# reverse leg at any power.
+# REVERSE IS DEAD ON THIS CHASSIS, re-confirmed unladen with sign-distance
+# measurement: 25/35/45/60/80/95 % all left the sign at 36.5 cm exactly, zero
+# variation, while forward at 20 % advanced 20 cm. The LPWM leg of the H-bridge
+# does not drive the motor at any power.
 #
 # Consequences: ParkingFSM cannot execute (its manoeuvre reverses into the bay),
 # and the car cannot back up to a start line on its own. Check the LPWM side of
