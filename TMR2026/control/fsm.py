@@ -100,6 +100,14 @@ class AutonomousFSM:
 
     SIGN_BBOX_STOP_MM = 320
 
+    # If the sign disappears while the last known distance was this close, treat
+    # it as ARRIVAL and brake -- do not resume cruise. Measured 2026-07-27: at
+    # under ~30 cm the octagon sits ~45 deg off the camera axis (HFOV is +/-33)
+    # and leaves the frame, so `sign_visible` drops exactly when the car reaches
+    # it. The old behaviour then transitioned back to CRUCERO and ACCELERATED
+    # into the sign; one trial ended 140 mm from it without ever braking.
+    SIGN_LOST_NEAR_MM = 600
+
     def __init__(self, motor, steering, pid, signals=None, brake_light=None):
         """
         Parameters
@@ -125,6 +133,7 @@ class AutonomousFSM:
 
         self._state          = FSMState.CRUCERO
         self._espera_start   = 0.0
+        self._last_sign_mm: Optional[float] = None
         self._cooldown_until = 0.0
         self._resume_speed   = 0.0
 
@@ -136,6 +145,7 @@ class AutonomousFSM:
         self.pid.reset()
         self._state        = FSMState.CRUCERO
         self._resume_speed = 0.0
+        self._last_sign_mm = None
         self._active       = True
         self._apply_lights()
         print("[FSM] Autonomous mode ENABLED")
@@ -200,8 +210,19 @@ class AutonomousFSM:
         self.motor.set_speed(self.MAX_AUTO_PWM)
 
     def _do_precaucion(self) -> None:
+        if self.sign_distance_mm is not None:
+            self._last_sign_mm = self.sign_distance_mm
+
         if not self.sign_visible:
-            self._transition(FSMState.CRUCERO)
+            near = (self._last_sign_mm is not None
+                    and self._last_sign_mm <= self.SIGN_LOST_NEAR_MM)
+            if near:
+                print(f"[FSM] Sign lost at {self._last_sign_mm:.0f}mm -> "
+                      f"braking (arrived)")
+                self._transition(FSMState.FRENADO)
+            else:
+                self._last_sign_mm = None
+                self._transition(FSMState.CRUCERO)
             return
 
         lidar_close = (self.lidar_mm is not None
@@ -226,6 +247,10 @@ class AutonomousFSM:
 
         elapsed = time.monotonic() - self._espera_start
         if elapsed >= self.ESPERA_S:
+            # Forget the last close-range reading: the stop is served, and a
+            # stale "near" memory would re-brake the car the moment the passed
+            # sign flickers during the cooldown drive-by.
+            self._last_sign_mm = None
             self._transition(FSMState.REANUDAR)
             print(f"[FSM] ESPERA complete ({elapsed:.2f} s) -> REANUDAR")
 

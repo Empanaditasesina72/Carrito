@@ -94,7 +94,12 @@ def _build_vision():
 def run_trial(fsm, camera, sign_det, sensor, cruise_pwm, max_drive_s,
               kick_pwm=0.0, kick_s=0.25, lane_pipe=None) -> dict:
     fsm.MAX_AUTO_PWM = float(cruise_pwm)      # cap cruise speed for safety
-    fsm.PRECAUCION_PWM = min(fsm.PRECAUCION_PWM, cruise_pwm * 0.6)
+    # FLOOR, not just a fraction. min(20, 25*0.6)=15 % put PRECAUCION below this
+    # motor's stall threshold, so the instant the car saw the sign it slowed to a
+    # standstill, lost the flickering detection, resumed cruise, saw it again --
+    # the CRUCERO<->PRECAUCION ping-pong that filled the 2026-07-27 logs, with
+    # every trial timing out mid-track. 20 % sustains motion once rolling.
+    fsm.PRECAUCION_PWM = max(20.0, cruise_pwm * 0.8)
     fsm.activate()
 
     # The kick used to run BEFORE activate(), as motor.kick() blocking for its
@@ -174,7 +179,10 @@ def run_trial(fsm, camera, sign_det, sensor, cruise_pwm, max_drive_s,
         # Without the ToF this is the only automatic stop. Bound how far the car
         # may travel when the sign is never detected, so it cannot run off the
         # track while the loop waits on a detection that is not coming.
-        if fsm.state not in (FSMState.ESPERA,) and (now - t0) >= max_drive_s:
+        # FRENADO is also excluded: a brake decided at t=2.99 must not be
+        # reclassified as max_drive by the cap firing one tick later.
+        if (fsm.state not in (FSMState.FRENADO, FSMState.ESPERA)
+                and (now - t0) >= max_drive_s):
             fsm.motor.brake()
             reason = "max_drive"
             break
@@ -219,7 +227,7 @@ def main() -> int:
     ap.add_argument("--cruise", type=float, default=25.0, help="cruise PWM %% (keep low)")
     ap.add_argument("--manual", action="store_true",
                     help="no ToF: brake on the camera, measure with a tape")
-    ap.add_argument("--max-drive", type=float, default=3.0,
+    ap.add_argument("--max-drive", type=float, default=8.0,
                     help="seconds the car may move before being braked anyway")
     ap.add_argument("--straight", action="store_true",
                     help="force zero lane error instead of following the lane. "
