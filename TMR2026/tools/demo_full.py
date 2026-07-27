@@ -118,8 +118,16 @@ def main() -> int:
     fsm  = AutonomousFSM(motor, steering, pid)
     park = ParkingFSM(motor, steering)
 
-    input("\nPon el carro en el CARRIL DERECHO al inicio de la pista y "
-          "presiona Enter...")
+    if args.no_prompt:
+        # input() needs a terminal; launched from a remote shell it hits EOF and
+        # the process dies before the car ever moves.
+        print("\n[DEMO] arrancando en 5 s -- APARTATE")
+        for s in (5, 4, 3, 2, 1):
+            print(f"  {s}...", flush=True)
+            time.sleep(1.0)
+    else:
+        input("\nPon el carro en el CARRIL DERECHO al inicio de la pista y "
+              "presiona Enter...")
 
     print("\n[DEMO] midiendo el ruido de la camara (carro quieto)...")
     tc = time.monotonic()
