@@ -123,6 +123,23 @@ class AutonomousFSM:
     # the log fills with CRUCERO<->PRECAUCION while the car surges and crawls.
     SIGN_LOST_GRACE_S = 0.6
 
+    # Seconds to keep rolling AFTER the sign is lost at close range, before
+    # braking. This exists because of a geometric limit, not a tuning choice.
+    #
+    # The sign stands beside the lane, roughly 28 cm off the camera axis, and the
+    # lens covers about +-33 deg. So it leaves the frame at
+    #     d = 0.28 / tan(33 deg) ~= 43 cm
+    # and SIGN_BBOX_STOP_MM = 320 can never fire: the car is blind to the sign
+    # before it ever gets that close. Both measured runs braked on the lost-sign
+    # rule instead, at 362 and 412 mm against a 270 mm setpoint -- a +117 mm mean
+    # error that no threshold change can remove, because the threshold is never
+    # reached.
+    #
+    # Coasting closes that gap by dead reckoning over the blind stretch. At the
+    # measured 15 cm/s (20 % duty advanced 20.8 cm in 1.4 s), 0.6 s is ~9 cm,
+    # taking the mean from 387 to roughly 300 mm. Set 0.0 to brake immediately.
+    SIGN_LOST_COAST_S = 0.6
+
     def __init__(self, motor, steering, pid, signals=None, brake_light=None):
         """
         Parameters
@@ -151,6 +168,7 @@ class AutonomousFSM:
         self._last_sign_mm: Optional[float] = None
         self._correcting     = False   # deadband hysteresis state
         self._sign_lost_at: Optional[float] = None
+        self._coast_until: Optional[float] = None
         self._last_cmd_angle = self.SERVO_CENTER
         self._cooldown_until = 0.0
         self._resume_speed   = 0.0
@@ -165,6 +183,7 @@ class AutonomousFSM:
         self._resume_speed = 0.0
         self._last_sign_mm = None
         self._sign_lost_at = None
+        self._coast_until  = None
         self._active       = True
         self._apply_lights()
         print("[FSM] Autonomous mode ENABLED")
@@ -245,12 +264,22 @@ class AutonomousFSM:
             near = (self._last_sign_mm is not None
                     and self._last_sign_mm <= self.SIGN_LOST_NEAR_MM)
             if near:
-                print(f"[FSM] Sign lost at {self._last_sign_mm:.0f}mm -> "
-                      f"braking (arrived)")
+                if self.SIGN_LOST_COAST_S > 0.0 and self._coast_until is None:
+                    self._coast_until = (time.monotonic()
+                                         + self.SIGN_LOST_COAST_S)
+                    print(f"[FSM] Sign lost at {self._last_sign_mm:.0f}mm -> "
+                          f"coasting {self.SIGN_LOST_COAST_S:.2f}s "
+                          f"(blind, sign is outside the lens)")
+                if self._coast_until is not None:
+                    if time.monotonic() < self._coast_until:
+                        self.motor.set_speed(self.PRECAUCION_PWM)
+                        return
+                    print(f"[FSM] Coast done -> braking")
                 self._transition(FSMState.FRENADO)
             else:
                 self._last_sign_mm = None
                 self._sign_lost_at = None
+                self._coast_until  = None
                 self._transition(FSMState.CRUCERO)
             return
 
@@ -280,6 +309,7 @@ class AutonomousFSM:
             # stale "near" memory would re-brake the car the moment the passed
             # sign flickers during the cooldown drive-by.
             self._last_sign_mm = None
+            self._coast_until  = None
             self._transition(FSMState.REANUDAR)
             print(f"[FSM] ESPERA complete ({elapsed:.2f} s) -> REANUDAR")
 
