@@ -146,9 +146,38 @@ TOF_TIMING_BUDGET_US = 20_000
 TOF_MAX_RANGE_MM     = 1_200
 TOF_POLL_INTERVAL_S  = 0.020
 
-STEER_KP = 0.09
-STEER_KI = 0.002
-STEER_KD = 0.025
+# Lane-following gains. ONE definition -- main.py, main_simulator.py and
+# tools/bench_braking_physical.py all read these now. They used to redefine
+# PID_KP=0.08 locally, agreeing with each other but not with this file.
+#
+# Kp 0.08 deg/px is not arbitrary: pure pursuit at small angles gives
+# delta ~= 2*L*x/Ld^2, so with wheelbase L=0.31 m and the BEV's 679.6 px/m,
+#     Ld 0.6 m -> 0.145      Ld 0.8 m -> 0.082      Ld 1.0 m -> 0.052
+# 0.08 therefore matches a lookahead of ~0.8 m, which is what
+# LANE_AIM_WINDOW_FRAC now actually measures at.
+#
+# Ki and Kd are ZERO on purpose:
+#   Ki -- with SERVO_TRIM_DEG calibrated there is no standing bias left to
+#         integrate away, and on a 3-8 s run an integrator can only wind up.
+#   Kd -- the lookahead already supplies the damping; a derivative on top just
+#         amplifies pixel noise into servo chatter.
+STEER_KP = 0.08
+STEER_KI = 0.0
+STEER_KD = 0.0
+
+# Where in the lane the car should sit, as a fraction from the LEFT solid line
+# across the full road width. The road is 27.5 cm (left->dashed) + 29.0 cm
+# (dashed->right) = 56.5 cm, so the centre of the RIGHT lane is at
+#     (0.275 + 0.290/2) / 0.565 = 0.74
+# 0.50 would centre the car on the dashed line itself -- which is what
+# track_calib.json was doing.
+LANE_RIGHT_BIAS = 0.74
+
+# Pure-pursuit lookahead, as a fraction of the bird's-eye view height measured
+# from the bottom. 0.70 aims near the far end of the view (~0.8 m ahead), which
+# is what STEER_KP is sized for. Raise if the car weaves, lower if it reacts
+# late or cuts corners.
+LANE_AIM_WINDOW_FRAC = 0.70
 
 # Heading feedforward (Stanley-style) on top of the lateral PID, in degrees of
 # servo per pseudo-degree of lane lean (LaneResult.heading). Why it exists: the

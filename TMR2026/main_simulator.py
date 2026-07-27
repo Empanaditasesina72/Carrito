@@ -61,9 +61,11 @@ LOOP_HZ           = 50
 CAMERA_W          = 640
 CAMERA_H          = 480
 CAMERA_FPS        = 30
-PID_KP            = 0.08
-PID_KI            = 0.002
-PID_KD            = 0.025
+# Lane-following gains come from config.py -- ONE definition. These three
+# entry points used to redefine them locally (0.08/0.002/0.025), agreeing
+# with each other but not with config's 0.09, so tuning config changed
+# nothing on the car.
+from config import STEER_KP as PID_KP, STEER_KI as PID_KI, STEER_KD as PID_KD
 PID_OUT_MIN       = -(SERVO_CENTER - SERVO_MIN)
 PID_OUT_MAX       =  (SERVO_MAX - SERVO_CENTER)
 

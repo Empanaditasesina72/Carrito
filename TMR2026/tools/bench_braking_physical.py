@@ -61,6 +61,7 @@ from config import (
     SERVO_CENTER_ANGLE, SERVO_MIN_ANGLE, SERVO_MAX_ANGLE,
     STOP_TARGET_MM, STOP_TOLERANCE_MM, EMERGENCY_STOP_MM,
     USE_IMX500_NPU, IMX500_RPK_PATH, IMX500_LABELS_PATH, IMX500_CONF,
+    LANE_RIGHT_BIAS,
 )
 from hardware.motor import MotorDriver
 from hardware.steering_driver import SteeringDriver
@@ -69,7 +70,11 @@ from control.pid_controller import PIDController
 from control.fsm import AutonomousFSM, FSMState
 
 CAMERA_W, CAMERA_H, CAMERA_FPS = 640, 480, 30
-PID_KP, PID_KI, PID_KD = 0.08, 0.002, 0.025
+# Lane-following gains come from config.py -- ONE definition. These three
+# entry points used to redefine them locally (0.08/0.002/0.025), agreeing
+# with each other but not with config's 0.09, so tuning config changed
+# nothing on the car.
+from config import STEER_KP as PID_KP, STEER_KI as PID_KI, STEER_KD as PID_KD
 LOOP_HZ = 50
 TRIAL_TIMEOUT_S = 25.0
 
@@ -271,7 +276,7 @@ def main() -> int:
             print(f"  lane calibration: unreadable ({e}); using defaults")
         lane_pipe = LanePipeline(
             frame_w=CAMERA_W, frame_h=CAMERA_H, debug=False,
-            right_bias=calib.get("right_bias", 0.70),
+            right_bias=calib.get("right_bias", LANE_RIGHT_BIAS),
             roi_frac=calib.get("roi_frac", 0.5),
             hsv_white_lo=calib.get("hsv_white_lo"),
             hsv_white_hi=calib.get("hsv_white_hi"),

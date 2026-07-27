@@ -36,6 +36,7 @@ import numpy as np
 from config import (
     CAMERA_WIDTH, CAMERA_HEIGHT, CAMERA_FPS,
     USE_IMX500_NPU, IMX500_RPK_PATH, IMX500_LABELS_PATH, IMX500_CONF,
+    LANE_RIGHT_BIAS,
 )
 from vision.lane_pipeline import LanePipeline
 
@@ -97,7 +98,7 @@ def main() -> int:
 
     lane = LanePipeline(
         frame_w=CAMERA_WIDTH, frame_h=CAMERA_HEIGHT, debug=True,
-        right_bias=calib.get("right_bias", 0.70),
+        right_bias=calib.get("right_bias", LANE_RIGHT_BIAS),
         roi_frac=calib.get("roi_frac", 0.5),
         hsv_white_lo=calib.get("hsv_white_lo"),
         hsv_white_hi=calib.get("hsv_white_hi"),

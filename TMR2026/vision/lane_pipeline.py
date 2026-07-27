@@ -40,6 +40,12 @@ try:
 except ImportError:
     _CFG_LANE_ERROR_OFFSET_PX = 0.0
 
+try:
+    from config import (LANE_RIGHT_BIAS as _CFG_RIGHT_BIAS,
+                        LANE_AIM_WINDOW_FRAC as _CFG_AIM_FRAC)
+except ImportError:
+    _CFG_RIGHT_BIAS, _CFG_AIM_FRAC = 0.74, 0.70
+
 
 @dataclass
 class LaneResult:
@@ -104,7 +110,13 @@ class LanePipeline:
 
     EMA_ALPHA  = 0.45
 
-    RIGHT_BIAS = 0.70
+    RIGHT_BIAS = _CFG_RIGHT_BIAS
+
+    # Which window row the steering error is measured at, as a fraction from the
+    # bottom of the bird's-eye view. This is the pure-pursuit lookahead. See the
+    # AIM ROW note in _sliding_windows(). Raise it (aim further) if the car
+    # weaves; lower it if it cuts corners or reacts too late.
+    AIM_WINDOW_FRAC = _CFG_AIM_FRAC
 
     def __init__(
         self,
@@ -414,48 +426,83 @@ class LanePipeline:
                              _lean(right_idx, right_centers)) if s is not None]
         heading = (float(np.degrees(np.arctan2(np.mean(leans), float(win_h))))
                    if leans else 0.0)
-        bias     = self._right_bias
+        bias        = self._right_bias
+        expected_px = LANE_WIDTH_M * 100.0 * self.BEV_SCALE_PX_PER_CM
 
-        if left_centers and right_centers:
-            mean_l = float(np.mean(left_centers))
-            mean_r = float(np.mean(right_centers))
-            expected_px = LANE_WIDTH_M * 100.0 * self.BEV_SCALE_PX_PER_CM
-            measured_px = mean_r - mean_l
-            ratio = measured_px / max(1.0, expected_px)
-            valid_width = abs(ratio - 1.0) <= self.LANE_WIDTH_TOL
+        l_by_i = dict(zip(left_idx,  left_centers))
+        r_by_i = dict(zip(right_idx, right_centers))
+        paired = sorted(set(l_by_i) & set(r_by_i))
+        widths = [r_by_i[i] - l_by_i[i] for i in paired]
+        width_px = float(np.median(widths)) if widths else float(expected_px)
 
-            if not valid_width:
-                if len(left_centers) >= len(right_centers):
-                    lane_cx    = mean_l + w * (0.20 + 0.16 * bias)
-                    confidence = 0.5
-                    left_x_avg  = int(mean_l)
-                    right_x_avg = None
-                else:
-                    lane_cx    = mean_r - w * (0.36 - 0.16 * bias)
-                    confidence = 0.5
-                    left_x_avg  = None
-                    right_x_avg = int(mean_r)
-                error = float(lane_cx - frame_cx)
-                return LaneResult(error_px=error, confidence=confidence,
-                                  heading=heading,
-                                  left_x=left_x_avg, right_x=right_x_avg)
+        width_ok = bool(widths) and (
+            abs(width_px / max(1.0, expected_px) - 1.0) <= self.LANE_WIDTH_TOL)
+        if widths and not width_ok:
+            # The pair is not a lane: one side latched onto the dashed centre
+            # line or onto something off-track. Trust the side with more
+            # evidence and rebuild the centre from the known width instead.
+            width_px = float(expected_px)
+            if len(left_centers) >= len(right_centers):
+                r_by_i = {}
+            else:
+                l_by_i = {}
+            paired = []
 
-            lane_cx    = mean_l + bias * (mean_r - mean_l)
-            confidence = 1.0
-            left_x_avg  = int(mean_l)
-            right_x_avg = int(mean_r)
-        elif left_centers:
-            lane_cx    = np.mean(left_centers) + w * (0.20 + 0.16 * bias)
-            confidence = 0.5
-            left_x_avg  = int(np.mean(left_centers))
-            right_x_avg = None
-        elif right_centers:
-            lane_cx    = np.mean(right_centers) - w * (0.36 - 0.16 * bias)
-            confidence = 0.5
-            left_x_avg  = None
-            right_x_avg = int(np.mean(right_centers))
-        else:
+        # ONE target rule for all three cases, so the estimate cannot jump when a
+        # line drops out: every row aims at the same fraction `bias` across the
+        # same measured lane width. The old code used magic fractions of the
+        # FRAME width (0.20+0.16*bias for left-only, 0.36-0.16*bias for
+        # right-only), which placed the three cases at DIFFERENT points in the
+        # lane. Measured at bias 0.70 they aimed at 70 %, 52 % and 59 % -- a 69 px
+        # (10 cm) step the instant one line flickered, straight into the servo.
+        centres_i: list[float] = []
+        centres_x: list[float] = []
+        for i in sorted(set(l_by_i) | set(r_by_i)):
+            if i in l_by_i and i in r_by_i:
+                cx = l_by_i[i] + bias * (r_by_i[i] - l_by_i[i])
+            elif i in l_by_i:
+                cx = l_by_i[i] + bias * width_px
+            else:
+                cx = r_by_i[i] - (1.0 - bias) * width_px
+            centres_i.append(float(i))
+            centres_x.append(float(cx))
+
+        if not centres_x:
             return LaneResult(error_px=self._smooth_error, confidence=0.0)
+
+        # AIM ROW -- the lookahead that makes this controllable at all.
+        #
+        # Steering on the instantaneous cross-track error is a double integrator
+        # (steering -> yaw rate -> heading -> lateral position); it oscillates at
+        # ANY gain, which is why neither Stanley nor pure pursuit uses cross-track
+        # alone. Pure pursuit aims at a point AHEAD, and for small angles
+        #     delta ~= 2 * L * x_ahead / Ld^2
+        # i.e. the steering command is proportional to the LATERAL OFFSET OF THAT
+        # POINT -- exactly what this returns. The lookahead supplies the damping
+        # and also covers the ~150 ms sensorimotor delay (33 ms exposure + ~10 ms
+        # pipeline + ~100 ms of MG90S travel), which at 0.3 m/s is 4.5 cm of blind
+        # motion.
+        #
+        # Averaging all nine window rows -- what this did before -- discards the
+        # lookahead and hands the gain an error measured at no particular
+        # distance. With L=0.31 m, Kp=0.08 deg/px corresponds to Ld~0.8 m, so the
+        # existing gain is already right for an aim near the top of the view; what
+        # was missing was measuring the error THERE.
+        aim_i = self.AIM_WINDOW_FRAC * (self.N_WINDOWS - 1)
+        if len(centres_x) >= 2:
+            # Fit through every available row, then evaluate at the aim row: uses
+            # all the evidence (noise averaging) and extrapolates cleanly when the
+            # far windows found nothing, which is common -- the lines are thinnest
+            # and dimmest up there.
+            slope, intercept = np.polyfit(np.asarray(centres_i),
+                                          np.asarray(centres_x), 1)
+            lane_cx = float(slope * aim_i + intercept)
+        else:
+            lane_cx = centres_x[0]
+
+        confidence  = 1.0 if paired else 0.5
+        left_x_avg  = int(np.mean(left_centers))  if l_by_i else None
+        right_x_avg = int(np.mean(right_centers)) if r_by_i else None
 
         error = float(lane_cx - frame_cx)
 
