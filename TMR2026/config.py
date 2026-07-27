@@ -167,6 +167,14 @@ STEER_KD = 0.025
 #   4. only then set 1.5 here, and raise toward 2.5 if it still weaves
 STEER_HEADING_GAIN = 0.0
 
+# Steering deadband: inside this lane-error band the servo holds CENTRE and does
+# not chase pixels (with the chassis trim calibrated, centre IS straight). It
+# re-engages when the error leaves the band and keeps correcting until it is
+# back inside the smaller inner band -- the hysteresis pair prevents chatter at
+# the boundary. 25 px = 3.7 cm at the BEV scale of 6.8 px/cm.
+LANE_DEADBAND_PX      = 25.0
+LANE_DEADBAND_EXIT_PX = 12.0
+
 VEL_STOP_KP = 0.035
 VEL_STOP_KI = 0.001
 VEL_STOP_KD = 0.008

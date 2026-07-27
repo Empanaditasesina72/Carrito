@@ -47,6 +47,12 @@ except ImportError:
     _CFG_STEER_HEADING_GAIN = 0.0
 
 try:
+    from config import (LANE_DEADBAND_PX as _CFG_DEADBAND,
+                        LANE_DEADBAND_EXIT_PX as _CFG_DEADBAND_EXIT)
+except ImportError:
+    _CFG_DEADBAND, _CFG_DEADBAND_EXIT = 0.0, 0.0
+
+try:
     from config import (
         SERVO_CENTER_ANGLE as _CFG_SERVO_CENTER,
         SERVO_MIN_ANGLE    as _CFG_SERVO_MIN,
@@ -91,6 +97,9 @@ class AutonomousFSM:
     COOLDOWN_S      = 3.0
     MIN_LANE_CONF   = _CFG_LANE_MIN_CONF
     HEADING_GAIN    = _CFG_STEER_HEADING_GAIN
+    DEADBAND_PX      = _CFG_DEADBAND
+    DEADBAND_EXIT_PX = _CFG_DEADBAND_EXIT
+    MIN_SERVO_DELTA  = 0.5   # deg; skip writes smaller than this (anti-jitter)
 
     SERVO_CENTER    = _CFG_SERVO_CENTER
     SERVO_MIN       = _CFG_SERVO_MIN
@@ -134,6 +143,8 @@ class AutonomousFSM:
         self._state          = FSMState.CRUCERO
         self._espera_start   = 0.0
         self._last_sign_mm: Optional[float] = None
+        self._correcting     = False   # deadband hysteresis state
+        self._last_cmd_angle = self.SERVO_CENTER
         self._cooldown_until = 0.0
         self._resume_speed   = 0.0
 
@@ -274,6 +285,25 @@ class AutonomousFSM:
         if self._state in (FSMState.FRENADO, FSMState.ESPERA):
             self.pid.reset()
 
+        # Deadband with hysteresis. Inside the band the servo holds CENTRE --
+        # with SERVO_TRIM_DEG calibrated, centre is physically straight -- and
+        # the PID stays reset so no stale integral fires on re-engage. The car
+        # is allowed to wander 25 px (3.7 cm); only when it leaves that band
+        # does the controller engage, and it then keeps correcting until the
+        # error is back under the inner 12 px so the boundary cannot chatter.
+        abs_err = abs(self.lane_error)
+        if self.DEADBAND_PX > 0.0 and self.lane_conf >= self.MIN_LANE_CONF:
+            if self._correcting:
+                if abs_err <= self.DEADBAND_EXIT_PX:
+                    self._correcting = False
+            elif abs_err > self.DEADBAND_PX:
+                self._correcting = True
+
+            if not self._correcting:
+                self.pid.reset()
+                self._write_angle(self.SERVO_CENTER)
+                return
+
         if self.lane_conf >= self.MIN_LANE_CONF:
             correction = self.pid.compute(self.lane_error, dt)
         else:
@@ -317,7 +347,16 @@ class AutonomousFSM:
         if self.lane_conf >= self.MIN_LANE_CONF and self.HEADING_GAIN > 0.0:
             angle += self.HEADING_GAIN * self.lane_heading
         angle = max(self.SERVO_MIN, min(self.SERVO_MAX, angle))
+        self._write_angle(angle)
+
+    def _write_angle(self, angle: float) -> None:
+        """Write the servo only when the command moved enough to matter.
+        Sub-half-degree chatter wears the servo and wobbles the car without
+        changing the trajectory."""
+        if abs(angle - self._last_cmd_angle) < self.MIN_SERVO_DELTA:
+            return
         self.steering.set_angle(angle)
+        self._last_cmd_angle = angle
 
     def _transition(self, new_state: FSMState) -> None:
         old = self._state
