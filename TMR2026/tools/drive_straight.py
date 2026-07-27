@@ -48,6 +48,7 @@ from hardware.motor import MotorDriver
 from hardware.steering_driver import SteeringDriver
 from vision.camera_stream import CameraStream
 from vision.lane_pipeline import LanePipeline
+from vision.motion_check import MotionCheck
 from control.pid_controller import PIDController
 from control.fsm import AutonomousFSM, FSMState
 
@@ -55,12 +56,23 @@ LOOP_HZ = 50
 PX_PER_CM = 6.796
 
 
-def run_once(fsm, cam, lane, steering, cruise, kick, seconds):
-    """One straight run. Returns per-tick samples."""
+def run_once(fsm, cam, lane, steering, cruise, kick, seconds, motion):
+    """One straight run. Returns (samples, stalled_seconds)."""
     fsm.MAX_AUTO_PWM = float(cruise)
-    fsm.activate()
 
-    kick_until = time.monotonic() + 0.25 if kick > 0 else 0.0
+    # Baseline the motion detector on this scene while the car is still stopped,
+    # so the stall test is relative to the sensor noise at the CURRENT gain.
+    motion.reset()
+    tc = time.monotonic()
+    while time.monotonic() - tc < 0.5:
+        motion.calibrate(cam.get_frame())
+        time.sleep(0.03)
+    base = motion.finish_calibration()
+
+    fsm.activate()
+    kick_until = time.monotonic() + 0.30 if kick > 0 else 0.0
+    next_rekick = 0.0
+    stalled_s = 0.0
     t0 = last = time.monotonic()
     samples = []
 
@@ -87,110 +99,139 @@ def run_once(fsm, cam, lane, steering, cruise, kick, seconds):
             if now < kick_until and fsm.state == FSMState.CRUCERO:
                 fsm.motor.kick(kick, 0.0)
 
+            # A stall is invisible to every other metric -- the scene stops
+            # changing, so the error freezes and the run reports flawless
+            # tracking. Re-kick instead of finishing a run that measured
+            # nothing. Only after the launch window, and rate-limited so a
+            # genuinely stuck car does not get hammered every tick.
+            moving = motion.update(frame)
+            if (not moving and now - t0 > 0.8 and now >= next_rekick
+                    and fsm.state == FSMState.CRUCERO and kick > 0):
+                fsm.motor.kick(kick, 0.0)
+                next_rekick = now + 0.5
+                stalled_s += 0.5
+                print(f"    [{now-t0:4.1f}s] ESTANCADO (mov {motion.last_diff:.2f} "
+                      f"< umbral {motion.threshold:.2f}) -- reintentando arranque",
+                      flush=True)
+
             samples.append((now - t0, r.error_px, r.confidence,
                             steering.current_angle, r.heading))
             time.sleep(max(0.0, (1.0 / LOOP_HZ) - (time.monotonic() - now)))
     finally:
         fsm.motor.brake()
         fsm.deactivate()
-    return samples
+    return samples, stalled_s, base
 
 
-def report(samples, idx, total) -> dict:
-    if len(samples) < 8:
-        print(f"  corrida {idx}/{total}: solo {len(samples)} muestras -- invalida")
+def report(samples, stalled_s, idx, total) -> dict:
+    """Judge one run by WHERE IT ENDED UP, not by its average.
+
+    The average was the wrong measure and it produced a wrong verdict on real
+    data. The operator places the car by hand before each run, so the mean error
+    over 4 s mostly reports the STARTING position, and a run that began 6 cm off
+    and corrected all the way to centre showed a large mean and a large "drift"
+    -- and got flagged as a failure when it was the controller working exactly as
+    intended. What matters is the error at the END and whether it is still
+    swinging once it gets there.
+    """
+    if len(samples) < 20:
+        print(f"  corrida {idx}/{total}: solo {len(samples)} muestras -- INVALIDA")
         return {}
 
     a = np.asarray(samples, dtype=float)
-    # Skip the launch transient: the kick and the first corrections are not
-    # steady-state behaviour and would dominate a 4 s average.
-    keep = a[a[:, 0] >= 0.8]
-    if len(keep) < 8:
-        keep = a
-    t, err, conf, ang = keep[:, 0], keep[:, 1], keep[:, 2], keep[:, 3]
-    drift = float(np.polyfit(t, err, 1)[0])
+    t_end = a[-1, 0]
+    first = a[(a[:, 0] >= 0.5) & (a[:, 0] < 1.5)]
+    last  = a[a[:, 0] >= max(1.5, t_end - 1.5)]
+    if len(first) < 5 or len(last) < 5:
+        print(f"  corrida {idx}/{total}: demasiado corta para juzgar")
+        return {}
 
-    print(f"\n  --- corrida {idx}/{total} ({len(a)} muestras, "
-          f"{a[-1,0]:.1f} s) ---")
-    print(f"  error medio : {err.mean():+7.1f} px  ({err.mean()/PX_PER_CM:+5.1f} cm)"
-          f"   <- desviacion permanente")
-    print(f"  desviacion  : {err.std():7.1f} px  ({err.std()/PX_PER_CM:5.1f} cm)"
-          f"   <- serpenteo")
-    print(f"  deriva      : {drift:+7.1f} px/s ({drift/PX_PER_CM:+5.1f} cm/s)"
-          f"   <- sesgo no vencido")
-    print(f"  servo       : medio {ang.mean():6.2f} deg  "
-          f"rango {ang.min():.1f}..{ang.max():.1f}")
-    print(f"  confianza   : {conf.mean():.0%}  "
-          f"(100% en {int((conf >= 1.0).sum())}/{len(keep)})")
-    return {"mean": err.mean(), "std": err.std(), "drift": drift,
-            "angle": float(ang.mean())}
+    e0, e1 = float(first[:, 1].mean()), float(last[:, 1].mean())
+    weave  = float(last[:, 1].std())
+    ang    = float(last[:, 3].mean())
+    conf   = float(a[:, 2].mean())
+
+    print(f"\n--- corrida {idx}/{total} ({len(a)} muestras, {t_end:.1f} s) ---")
+    if stalled_s > 0:
+        print(f"  !! el motor se estanco ~{stalled_s:.1f} s -- corrida NO valida")
+    print(f"  empezo en   : {e0:+7.1f} px ({e0/PX_PER_CM:+5.1f} cm)")
+    print(f"  TERMINO en  : {e1:+7.1f} px ({e1/PX_PER_CM:+5.1f} cm)   <- lo que importa")
+    print(f"  serpenteo   : {weave:7.1f} px ({weave/PX_PER_CM:5.1f} cm) al final")
+    print(f"  servo       : medio {ang:6.2f} deg  "
+          f"rango {last[:,3].min():.1f}..{last[:,3].max():.1f}")
+    print(f"  confianza   : {conf:.0%}")
+    if abs(e1) < abs(e0) - 3:
+        print(f"  -> CONVERGIENDO: corrigio {abs(e0)-abs(e1):.0f} px hacia el centro")
+    elif abs(e1) > abs(e0) + 3:
+        print(f"  -> DIVERGIENDO: se alejo {abs(e1)-abs(e0):.0f} px del centro")
+
+    return {"end": e1, "weave": weave, "angle": ang,
+            "converged": abs(e1) < abs(e0) - 3, "stalled": stalled_s > 0}
 
 
 def verdict(stats: list[dict]) -> float | None:
     """Print the diagnosis; return the suggested SERVO_TRIM_DEG, or None."""
-    ok = [s for s in stats if s]
+    all_runs = [s for s in stats if s]
+    ok = [s for s in all_runs if not s["stalled"]]
     if not ok:
-        print("\nSin corridas validas.")
+        print("\nSin corridas validas (todas se estancaron o fueron muy cortas).")
         return None
-    m = float(np.mean([s["mean"] for s in ok]))
-    s = float(np.mean([s["std"] for s in ok]))
-    d = float(np.mean([s["drift"] for s in ok]))
+    if len(ok) < len(all_runs):
+        print(f"\n({len(all_runs)-len(ok)} corrida(s) descartada(s) por estancamiento)")
+
+    e = float(np.mean([s["end"] for s in ok]))
+    w = float(np.mean([s["weave"] for s in ok]))
+    worst = max(abs(s["end"]) for s in ok)
 
     print("\n" + "=" * 62)
-    print(f"  PROMEDIO DE {len(ok)} CORRIDA(S)")
-    print(f"    error medio {m:+.1f} px ({m/PX_PER_CM:+.1f} cm)   "
-          f"desv {s:.1f} px   deriva {d:+.1f} px/s")
+    print(f"  {len(ok)} CORRIDA(S) VALIDA(S)")
+    print(f"    termino en {e:+.1f} px ({e/PX_PER_CM:+.1f} cm)   "
+          f"serpenteo {w:.1f} px ({w/PX_PER_CM:.1f} cm)   "
+          f"peor {worst:.0f} px")
     print()
     good = True
-    if abs(m) > 20:
+    if abs(e) > 25:
         good = False
-        print(f"  X DESVIADO {abs(m)/PX_PER_CM:.1f} cm del centro del carril.")
-        print(f"    -> el cero esta mal: recentra el carro a mano y remide")
+        print(f"  X TERMINA {abs(e)/PX_PER_CM:.1f} cm fuera del centro del carril.")
+        print(f"    -> recentra el carro a mano, corre diag_track y ajusta")
         print(f"       LANE_ERROR_OFFSET_PX (ahora {LANE_ERROR_OFFSET_PX}).")
-    if abs(d) > 12:
+    if w > 25:
         good = False
-        side = "izquierda" if d > 0 else "derecha"
-        print(f"  X SE VA HACIA LA {side.upper()} a {abs(d)/PX_PER_CM:.1f} cm/s.")
-        print(f"    -> el trim no venci el sesgo mecanico. Vuelve a correr")
-        print(f"       tools/auto_trim.py (ahora {SERVO_TRIM_DEG:+.1f} deg).")
-    if s > 35:
-        good = False
-        print(f"  X SERPENTEA {s/PX_PER_CM:.1f} cm.")
-        print(f"    -> apunta mas lejos: sube LANE_AIM_WINDOW_FRAC hacia 0.85,")
+        print(f"  X SERPENTEA {w/PX_PER_CM:.1f} cm al final del recorrido.")
+        print(f"    -> apunta mas lejos: LANE_AIM_WINDOW_FRAC hacia 0.85,")
         print(f"       o baja STEER_KP (ahora {STEER_KP}).")
     if good:
-        print("  OK -- VA DERECHO. Listo para las corridas de frenado.")
+        print("  OK -- VA DERECHO Y SE QUEDA EN EL CARRIL.")
 
     # TRIM, measured directly instead of inferred from a drift rate.
     #
-    # In closed loop with pure P, the car only travels straight when the
-    # commanded steering exactly cancels the mechanical bias. So the servo's
-    # steady-state deviation from centre IS that bias, read off in one run --
-    # where auto_trim needed six to eight open-loop bursts and still never got
-    # the drift to cross zero (28, 47, 73, 46, 22, 28, 33, 7 px/s).
+    # In closed loop with pure P the car travels straight only when the commanded
+    # steering exactly cancels the mechanical bias, so the servo's steady-state
+    # deviation from centre IS that bias -- read off in one run, where the
+    # open-loop drift search needed eight and never converged.
     #
     # _physical() computes (2*90 - logical) + TRIM, so holding logical `a` gives
-    # the same wheels as holding 90 would with TRIM shifted by -(a - 90):
+    # the same wheels as centre would with TRIM shifted by -(a - 90):
     #     TRIM_new = TRIM_old - (mean_angle - 90)
-    #
-    # Only meaningful with the deadband off: inside the band the servo is pinned
-    # to centre and the mean stops tracking what the car needs.
     a = float(np.mean([s["angle"] for s in ok]))
     dev = a - 90.0
     suggested = SERVO_TRIM_DEG - dev
     print()
     print(f"  TRIM: el servo se sostuvo en {a:.2f} deg ({dev:+.2f} del centro)")
-    if LANE_DEADBAND_PX > 0 and AutonomousFSM.DEADBAND_PX > 0:
+    if AutonomousFSM.DEADBAND_PX > 0:
         print(f"    (banda muerta activa -> esta lectura NO sirve para el trim;")
         print(f"     repite con --no-deadband)")
-    elif abs(dev) < 0.4:
+        print("=" * 62)
+        return None
+    if abs(dev) < 0.4:
         print(f"    trim correcto: el controlador no necesita sostener nada.")
-    else:
-        print(f"    sesgo mecanico residual {-dev:+.2f} deg  ->  "
-              f"SERVO_TRIM_DEG {SERVO_TRIM_DEG:+.1f} deberia ser {suggested:+.1f}")
-        print(f"    aplicalo con:  python tools/drive_straight.py --apply-trim")
+        print("=" * 62)
+        return None
+    print(f"    sesgo mecanico residual {-dev:+.2f} deg  ->  "
+          f"SERVO_TRIM_DEG {SERVO_TRIM_DEG:+.1f} deberia ser {suggested:+.1f}")
+    print(f"    aplicalo con:  python tools/drive_straight.py --apply-trim")
     print("=" * 62)
-    return suggested if abs(dev) >= 0.4 else None
+    return suggested
 
 
 def main() -> None:
@@ -229,15 +270,17 @@ def main() -> None:
                                         SERVO_MAX_ANGLE - SERVO_CENTER_ANGLE),
                          integral_limits=(-25.0, 25.0))
     fsm = AutonomousFSM(motor, steering, pid)
+    motion = MotionCheck()
 
     stats = []
     try:
         for k in range(1, args.runs + 1):
             input(f"\n[{k}/{args.runs}] Pon el carro en el CARRIL DERECHO "
                   f"apuntando recto y presiona Enter (Ctrl+C aborta)...")
-            s = run_once(fsm, cam, lane, steering, args.cruise, args.kick,
-                         args.seconds)
-            stats.append(report(s, k, args.runs))
+            s, stalled, base = run_once(fsm, cam, lane, steering,
+                                        args.cruise, args.kick,
+                                        args.seconds, motion)
+            stats.append(report(s, stalled, k, args.runs))
     except KeyboardInterrupt:
         print("\n[STRAIGHT] Abortado.")
     finally:
