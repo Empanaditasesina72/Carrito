@@ -122,7 +122,8 @@ def report(samples, idx, total) -> dict:
           f"rango {ang.min():.1f}..{ang.max():.1f}")
     print(f"  confianza   : {conf.mean():.0%}  "
           f"(100% en {int((conf >= 1.0).sum())}/{len(keep)})")
-    return {"mean": err.mean(), "std": err.std(), "drift": drift}
+    return {"mean": err.mean(), "std": err.std(), "drift": drift,
+            "angle": float(ang.mean())}
 
 
 def verdict(stats: list[dict]) -> None:
@@ -158,7 +159,37 @@ def verdict(stats: list[dict]) -> None:
         print(f"       o baja STEER_KP (ahora {STEER_KP}).")
     if good:
         print("  OK -- VA DERECHO. Listo para las corridas de frenado.")
+
+    # TRIM, measured directly instead of inferred from a drift rate.
+    #
+    # In closed loop with pure P, the car only travels straight when the
+    # commanded steering exactly cancels the mechanical bias. So the servo's
+    # steady-state deviation from centre IS that bias, read off in one run --
+    # where auto_trim needed six to eight open-loop bursts and still never got
+    # the drift to cross zero (28, 47, 73, 46, 22, 28, 33, 7 px/s).
+    #
+    # _physical() computes (2*90 - logical) + TRIM, so holding logical `a` gives
+    # the same wheels as holding 90 would with TRIM shifted by -(a - 90):
+    #     TRIM_new = TRIM_old - (mean_angle - 90)
+    #
+    # Only meaningful with the deadband off: inside the band the servo is pinned
+    # to centre and the mean stops tracking what the car needs.
+    a = float(np.mean([s["angle"] for s in ok]))
+    dev = a - 90.0
+    suggested = SERVO_TRIM_DEG - dev
+    print()
+    print(f"  TRIM: el servo se sostuvo en {a:.2f} deg ({dev:+.2f} del centro)")
+    if LANE_DEADBAND_PX > 0 and AutonomousFSM.DEADBAND_PX > 0:
+        print(f"    (banda muerta activa -> esta lectura NO sirve para el trim;")
+        print(f"     repite con --no-deadband)")
+    elif abs(dev) < 0.4:
+        print(f"    trim correcto: el controlador no necesita sostener nada.")
+    else:
+        print(f"    sesgo mecanico residual {-dev:+.2f} deg  ->  "
+              f"SERVO_TRIM_DEG {SERVO_TRIM_DEG:+.1f} deberia ser {suggested:+.1f}")
+        print(f"    aplicalo con:  python tools/drive_straight.py --apply-trim")
     print("=" * 62)
+    return suggested if abs(dev) >= 0.4 else None
 
 
 def main() -> None:
@@ -167,7 +198,21 @@ def main() -> None:
     ap.add_argument("--cruise", type=float, default=25.0)
     ap.add_argument("--kick", type=float, default=80.0)
     ap.add_argument("--runs", type=int, default=1)
+    ap.add_argument("--no-deadband", action="store_true",
+                    help="disable the steering deadband for this run. Required "
+                         "for a trustworthy trim estimate: inside the band the "
+                         "servo is pinned to centre, so the mean angle no longer "
+                         "reflects the correction the car actually needs.")
+    ap.add_argument("--apply-trim", action="store_true",
+                    help="write the measured trim into config.py (implies "
+                         "--no-deadband)")
     args = ap.parse_args()
+
+    if args.apply_trim:
+        args.no_deadband = True
+    if args.no_deadband:
+        AutonomousFSM.DEADBAND_PX = 0.0
+        print("[STRAIGHT] banda muerta DESACTIVADA (medicion de trim)")
 
     print(f"trim {SERVO_TRIM_DEG:+.1f} deg | offset {LANE_ERROR_OFFSET_PX} px | "
           f"bias {LANE_RIGHT_BIAS} | Kp {STEER_KP} Ki {STEER_KI} Kd {STEER_KD} | "
@@ -201,7 +246,22 @@ def main() -> None:
         cam.stop()
         motor.cleanup()
 
-    verdict(stats)
+    suggested = verdict(stats)
+
+    if args.apply_trim and suggested is not None:
+        import re
+        cfg = ROOT / "config.py"
+        txt = cfg.read_text(encoding="utf-8")
+        txt = re.sub(r"^SERVO_TRIM_DEG\s*=.*$",
+                     f"SERVO_TRIM_DEG      = {suggested:.1f}",
+                     txt, count=1, flags=re.M)
+        cfg.write_text(txt, encoding="utf-8")
+        print(f"\n[STRAIGHT] config.py: SERVO_TRIM_DEG = {suggested:.1f}")
+        print("[STRAIGHT] vuelve a correr sin --apply-trim para confirmar.")
+        print("[STRAIGHT] recuerda: esto ensucia el repo del Pi y bloquea el")
+        print("           siguiente 'git push pi'. Avisame para commitearlo.")
+    elif args.apply_trim:
+        print("\n[STRAIGHT] nada que aplicar: el trim ya esta bien.")
 
 
 if __name__ == "__main__":
