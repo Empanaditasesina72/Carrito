@@ -126,11 +126,12 @@ def report(samples, idx, total) -> dict:
             "angle": float(ang.mean())}
 
 
-def verdict(stats: list[dict]) -> None:
+def verdict(stats: list[dict]) -> float | None:
+    """Print the diagnosis; return the suggested SERVO_TRIM_DEG, or None."""
     ok = [s for s in stats if s]
     if not ok:
         print("\nSin corridas validas.")
-        return
+        return None
     m = float(np.mean([s["mean"] for s in ok]))
     s = float(np.mean([s["std"] for s in ok]))
     d = float(np.mean([s["drift"] for s in ok]))
