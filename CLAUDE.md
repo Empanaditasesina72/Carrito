@@ -2,41 +2,99 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Current focus & roadmap (updated 2026-07-07 — read this first when resuming)
+## Current focus & roadmap (updated 2026-07-27 — read this first when resuming)
 
-**Goal:** make the car drive any basic road-like ("carretera") track *and* read its signs, with both models running on the Pi for the TMR competition.
+**Goal:** the car drives itself down the right lane, stops at the STOP sign, and
+the paper gets its P2 braking row. Sign detection and steering both run on the Pi
+CPU (`USE_IMX500_NPU=False`).
 
-Two learned models, two destinations on the Pi:
-- **Sign detection** (YOLO `tmr_signs`) → runs on the **IMX500 NPU** (inside the camera, ~0 % CPU).
-- **Steering** (`DriveNet`, behavioral cloning) → runs on the **Pi CPU** (tiny, ~1 MB). The IMX500 holds **one** model at a time, so it stays on signs; DriveNet never shares the NPU.
+### IT DRIVES. Two autonomous runs completed 2026-07-27:
 
-**Train here, deploy there** (the NPU and the Pi CANNOT train — the IMX500 is inference-only and the Pi 5 has no CUDA GPU):
+```
+[FASE 1] CARRIL                      lane following, closed loop
+[FSM] Sign lost at 412mm -> braking (arrived)
+[FASE 2] ALTO en t=4.2 s             braked, held 5.00 s exactly
+[FSM] ESPERA complete -> REANUDAR    pulled away again
+```
+Lane error at the end −11.5 px (−1.7 cm), weave 0.1–0.7 px, confidence 99–100 %.
+Stopping distances **362 and 412 mm** against a 270 mm setpoint.
 
-| Stage | Machine |
+Run it with `python tools/demo_full.py --no-park --cruise 30 --kick 70`.
+
+### BLOCKED ON HARDWARE (do not re-diagnose in software)
+
+| What | Evidence |
 |---|---|
-| **TRAIN** (`.pt`) | **PC + GTX 1650** — CUDA is set up: `torch 2.12.0+cu126` |
-| Move weights | git: PC commits → `push` → Pi `pull` (or `git push pi main` over LAN — remote `pi`, much faster than the Pi pulling GitHub) |
-| **Convert** `.pt`→`.rpk` | **PC WSL Ubuntu** (quantize) + **Pi** (`imx500-package`). The Pi can NO LONGER run the full converter: Sony's `uni-pytorch` needs Python <3.13 and the Pi has 3.13.5. See "IMX500 conversion (2026-07-07 procedure)" below. |
-| **Infer** | **Pi + IMX500** (signs) · **Pi CPU** (DriveNet) |
+| **Motor battery flat**, no charger on site (2026-07-27 night) | — |
+| **REVERSE IS DEAD** — LPWM leg of the IBT-2 does not conduct | Three independent methods: sign distance identical at 6 duties (36.5 cm every time); lane line positions dL/dR/dSep all +0.0; whole-frame difference 0.30–0.34 (noise floor) at 40/60/80/95 %. Forward at **20 %** moves 20 cm. |
 
-**Done so far (this machine):**
-- Built the full **DriveNet behavioral-cloning pipeline** (opt-in, `config.py:USE_DRIVE_NET=False`): `vision/drive_net.py` + tools `gen_synth_driving` / `record_driving` / `train_drive` / `test_drive_net` / `export_drive`, plus `tools/train_signs.py`. Docs: `TMR2026/docs/DRIVE_NET.md`. Commits `1b2c9b9`, `25010f0`.
-- **Configured CUDA** on the PC GTX 1650: `pip install torch==2.12.0+cu126 torchvision==0.27.0+cu126 --index-url https://download.pytorch.org/whl/cu126`. `torch.cuda.is_available()==True`. (cu128 has no torch 2.12 build; cu126 is the right index for Python 3.14.)
-- **✅ Retrained the sign detector on the GPU** (`tools/train_signs.py`, data in `traffic_lights/`). Early-stopped at epoch 92 (best 62): val mAP@50 0.995, mAP@50-95 0.647, all 7 classes recall 1.0; held-out test @conf 0.55 → P 99.3 % / R 98.6 % / F1 99.0 %. Deployed `best.pt` → `weights/tmr_signs.pt` + regenerated NCNN. Commit `5fdb844`. **The `SignDetector(conf=0.55)` threshold is confirmed still optimal.** (Used `traffic_lights/data_local.yaml`, a gitignored copy of `data.yaml` with an absolute `path:` — the Roboflow `../train/images` resolves to the repo root, wrong.)
-- **✅ DriveNet GPU path validated + baseline trained.** Synthetic 4000/1000, `--workers 4` → best val_RMSE 14.7 px, eval RMSE 10.6 px. The `drive_net.pt` is synthetic-only (gitignored, NOT deployed; `USE_DRIVE_NET` stays False until real-data training). Also **fixed `train_drive.py`** so `--workers>0` works on Windows (moved `TubDataset` to module level — `<locals>` classes can't be pickled by spawn). Commit `e405e70`. Capture plan: `TMR2026/docs/DRIVE_NET_CAPTURE_PLAN.md` (commit `bf02372`).
+Reverse being dead means **`ParkingFSM` cannot execute** (it reverses into the bay)
+and the car cannot return itself to a start line — reposition it by hand between
+runs.
 
-- **✅ Detector deployed to the Pi + `.rpk` generated (2026-07-07).** SSH access to the Pi works from this PC (`ssh angel01@192.168.1.71`, key auth; repo at `~/Carrito`). Pi synced to `9b163a6` via LAN push (remote `pi`; the Pi's GitHub pull was crawling). The `.rpk` is installed at `~/Carrito/TMR2026/weights/tmr_signs_imx500.rpk` (3 MB) + labels file; `USE_IMX500_NPU=True` so the NPU path activates on the next `main.py` start. NOT yet smoke-tested on the car.
+### Calibration, all measured on the car (not inherited from the simulator)
 
-**IMX500 conversion (2026-07-07 procedure — `tools/export_imx500.py` on the Pi is BROKEN, Python 3.13):**
-1. On the PC, WSL Ubuntu has the toolchain ready: venv `~/imx_venv` (Python 3.12, torch CPU, ultralytics, model-compression-toolkit, imx500-converter[pt]) + portable JRE at `~/jre`. Calibration yaml: `traffic_lights/data_wsl.yaml` (gitignored, WSL-absolute `path:`).
-2. Run the export in WSL (quantizes INT8 + converts, ~18 min): loads `weights/tmr_signs.pt`, `model.export(format="imx", data=data_wsl.yaml, fraction=0.25)` → `weights/tmr_signs_imx_model/packerOut.zip` (+ `labels.txt`). Ultralytics does NOT produce the `.rpk` itself (that needs `imx500-package`, only packaged for Pi OS).
-3. `scp packerOut.zip labels.txt angel01@192.168.1.71:/tmp/`, then on the Pi: `imx500-package -i /tmp/packerOut.zip -o /tmp/rpk_out` (seconds; needs apt `imx500-tools` + `default-jre`, already installed) → copy `network.rpk` to `~/Carrito/TMR2026/weights/tmr_signs_imx500.rpk` and labels to `tmr_signs_imx500_labels.txt`.
+| Parameter | Value | How it was found |
+|---|---|---|
+| `SERVO_TRIM_DEG` | **−7.5** | Closed-loop: the servo's steady-state deviation from centre IS the mechanical bias. One run per estimate; residual went +3.97° → +0.58°. |
+| `LANE_ERROR_OFFSET_PX` | **58.5** | Car centred in the right lane by hand; reads +0.1 px there. |
+| `LANE_RIGHT_BIAS` | **0.74** | (0.275 + 0.290/2)/0.565 = centre of the right lane. |
+| `LANE_AIM_WINDOW_FRAC` | **0.70** | Pure-pursuit lookahead (~0.8 m), which `STEER_KP=0.08` is already sized for. |
+| `STEER_KP/KI/KD` | **0.08 / 0 / 0** | Ki=0 because trim removes the standing bias; Kd=0 because the lookahead damps. |
+| `MOTOR_MIN_MOVE_PWM` | **20.0** | Sign-distance sweep unladen: 20 % → +20.8 cm in 1.4 s. |
 
-**Next steps:**
-1. **Smoke-test the NPU on the car:** `python main.py --display`, enter VISION, expect `[VISION] Backend: IMX500 NPU (on-chip inference)`; tune `config.py:IMX500_CONF` (0.55) on track.
-2. **Capture real DriveNet driving data** (none exists yet — the only blocker for the steering model). Follow `TMR2026/docs/DRIVE_NET_CAPTURE_PLAN.md`: Pi camera (`capture_track.py` → `record_driving.py --source images`) or Unity sim → train on GPU here (`train_drive.py --device cuda --workers 4`) → fine-tune over the synthetic baseline → deploy to Pi CPU → set `USE_DRIVE_NET=True`.
+**Weight matters more than duty.** With a spare battery riding on the chassis the
+car would not move at **95 %**; unladen it moves at **20 %**. Every "the motor has
+no torque" conclusion earlier that day was measured under that load and was wrong
+about the cause. Keep the chassis light.
 
-**Standing decision:** all training stays on the PC (GPU); the Pi is for conversion, on-track testing and running the car.
+### The braking distance is limited by the LENS, not by a threshold
+
+`SIGN_BBOX_STOP_MM = 320` **can never fire**. The sign sits ~28 cm off the camera
+axis and the lens covers ~±33°, so it leaves the frame at
+
+    d = 0.28 / tan(33°) ≈ 43 cm
+
+The car is blind to the sign before it can ever get that close, so every stop is
+decided by `SIGN_LOST_NEAR_MM` at whatever distance the sign happened to vanish —
+hence 362 and 412 mm. `SIGN_LOST_COAST_S = 0.6` now dead-reckons across the blind
+stretch (~9 cm at the measured 15 cm/s). **Moving the sign closer to the lane edge
+is the physical fix**: it stays in frame longer and the stop tightens toward 270.
+
+### Next steps
+
+1. Charge the motor battery.
+2. 2–3 runs, measure lens→octagon face with a tape, tune `SIGN_LOST_COAST_S` to
+   centre on 270 mm.
+3. The 10 P2 trials. `tools/bench_braking_physical.py` persists each row with
+   fsync, so a crash no longer loses them.
+4. Record with the DJI **lateral to the track, at car height** — that angle shows
+   straightness and the stop point; head-on or overhead do not.
+5. Only if LPWM gets fixed: parking.
+
+**Standing decision:** all training on the PC GPU; the Pi converts, tests and runs.
+
+### Instrumentation lessons that cost hours today — do not repeat them
+
+- **A stalled run looks perfect to every metric.** Lane-error std 0.1 px, drift
+  0.0, servo frozen — that was a car that never moved. A static scene cannot
+  produce a changing error.
+- **Frame differencing cannot tell driving from vibrating.** Chassis vibration
+  displaces each frame a few pixels at random, so consecutive frames — and even
+  frames a second apart — differ as much as while driving. It reported motion at
+  five duties on a stationary car, twice. Use `vision/motion_check.py` only as a
+  hint; the trustworthy ground truth is **sign distance** (YOLO bbox through the
+  pinhole) or **lane line positions**.
+- **Mean error over a run measures where the operator PLACED the car**, not where
+  it ended up. A run that started 6 cm off and corrected to centre showed a large
+  mean and a large "drift" and was reported as a failure. Judge by the final
+  error and the weave once settled — `tools/drive_straight.py` does.
+- **A test window shorter than the measurement window measures nothing.** 0.9 s
+  bursts against a 1.0 s lookback produced a whole duty sweep that described the
+  test, not the car.
+- **`auto_trim` writing config.py leaves the Pi's tree dirty and silently rejects
+  `git push pi`.** The car ran old code for a while because of this. Commit the
+  trim after applying it.
 
 ## Active system: TMR2026/
 
@@ -49,7 +107,7 @@ Everything under `TMR2026/` is the current vehicle. Legacy prototypes live in `_
 ### Hardware Target
 
 Raspberry Pi 5 with:
-- Sony IMX500 NPU camera via `Picamera2` (RGB888 → BGR via `cv2.cvtColor(RGB2BGR)` — must preserve)
+- Sony IMX500 NPU camera via `Picamera2`. `"RGB888"` already hands back **BGR-ordered** bytes — **do NOT add a `cv2.COLOR_RGB2BGR`**, see the hard rule below. (This line used to say the opposite.)
 - IBT-2 H-bridge motor: BCM 18 (RPWM) + 13 (LPWM), `R_EN`/`L_EN` tied to 3.3 V
 - PCA9685 servo on I²C bus 3 (dtoverlay GPIO 0/1), channel `config.py:SERVO_CHANNEL` (15, verified on the Pi)
 - 2× VL53L0X ToF on I²C bus 4 (dtoverlay GPIO 23/22), addresses 0x30 (front) / 0x29 (rear), XSHUT pin `TMR2026/config.py:PIN_TOF_XSHUT_FRONT`
