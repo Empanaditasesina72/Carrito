@@ -228,14 +228,29 @@ VEL_STOP_KP = 0.035
 VEL_STOP_KI = 0.001
 VEL_STOP_KD = 0.008
 
-# Lowest duty at which this car actually moves, MEASURED 2026-07-27 by stepping
-# the H-bridge and watching the camera for motion (30/45/60/80/95 %):
-#     30 % -> moves      everything below it -> stalls
-# This is why a full-sequence attempt at cruise 25 % never moved: the launch kick
-# lasted ~0.15 s before the ramp pulled the duty back under the threshold, and
-# the car sat still while every metric reported flawless tracking. Never command
-# a sustained duty below this and expect the car to keep rolling.
-MOTOR_MIN_MOVE_PWM = 30.0
+# Lowest SUSTAINED duty that moves this car. Measured 2026-07-27 by driving the
+# H-bridge directly and watching the camera, 2.5 s per step:
+#     35 % 1.58 (marginal)   40 % 2.47   45 % 2.68   50 % 3.28   60 % 3.12
+#     against a 1.57 motion threshold
+#
+# An earlier reading of 30 % came from 0.9 s bursts measured by a detector that
+# compares against a frame 1.0 s old -- the burst was shorter than the
+# measurement window, so it could not have detected motion at any duty. That
+# whole sweep was an artefact of its own test.
+#
+# Cruise must sit clearly above this. A run at 25 % never moved at all: the
+# launch kick lasts ~0.15 s before the ramp pulls the duty back under threshold.
+MOTOR_MIN_MOVE_PWM = 35.0
+
+# REVERSE IS DEAD ON THIS CHASSIS. Measured the same way, driving LPWM instead of
+# RPWM: 60 % -> 0.351, 80 % -> 0.235, 95 % -> 0.238, all at the noise floor,
+# while forward at the same duty reads 3.1. The motor does not respond to the
+# reverse leg at any power.
+#
+# Consequences: ParkingFSM cannot execute (its manoeuvre reverses into the bay),
+# and the car cannot back up to a start line on its own. Check the LPWM side of
+# the IBT-2 and its wiring before relying on either.
+MOTOR_REVERSE_OK = False
 
 SPEED_STRAIGHT   = 22
 SPEED_CURVE      = 15

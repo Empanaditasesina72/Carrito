@@ -86,7 +86,7 @@ def build_vision():
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--cruise", type=float, default=35.0)
+    ap.add_argument("--cruise", type=float, default=45.0)
     ap.add_argument("--kick", type=float, default=80.0)
     ap.add_argument("--timeout", type=float, default=45.0)
     ap.add_argument("--park-after", type=float, default=3.0,
