@@ -15,9 +15,10 @@ So this builds that case directly:
             Their existing labels are carried through and merged with the new
             ones, so every sign in the output frame is labeled.
   scale   - from the pinhole model in config.py. With focal 490 px and an 8.5 cm
-            octagon, height_px = 0.085 * 490 / d. Pastes are drawn from the FAR
-            half of the range (1.0-2.5 m = 16-42 px), because that is precisely
-            where the dataset thins out; the near half it already covers well.
+            octagon, height_px = 0.085 * 490 / d. Pastes are drawn from the band
+            in which the car actually decides to brake: 0.40-1.30 m = 32-104 px.
+            Beyond 1.3 m the sign is not yet reliably detected; closer than 43 cm
+            it has left the lens entirely, so neither end is worth weight.
 
 An earlier version of this script used the legacy 640x480 webcam recordings in
 _legacy/runs/detect/ as plates, on the theory that they were shot in the house
@@ -64,8 +65,18 @@ FRAME = (640, 480)
 
 FOCAL_PX = 490.0
 SIGN_H_M = 0.085
-# Far half of the operating range only -- 1.0 m -> 42 px, 2.5 m -> 16 px.
-DIST_MIN_M, DIST_MAX_M = 1.00, 2.50
+# The range in which the car actually DECIDES TO BRAKE, measured on the track
+# 2026-07-27, not the range that happens to be thin in the dataset:
+#
+#   1.30 m ->  32 px   first reliable detection
+#   1.04 m ->  40 px   measured, sign read 56-61 %
+#   0.43 m ->  97 px   the sign leaves the lens (28 cm off axis, ~+-33 deg FOV)
+#
+# Closer than 43 cm the sign is simply not in frame, so nothing past that matters.
+# This was 1.0-2.5 m (16-41 px), i.e. FAR signs -- almost no overlap with the
+# 32-104 px band the braking decision is actually made in. Training weight was
+# going to a case the car never uses.
+DIST_MIN_M, DIST_MAX_M = 0.40, 1.30
 
 IMG_EXTS = (".jpg", ".jpeg", ".png", ".bmp")
 STOP_ID = CLASS_NAMES.index("stop")
