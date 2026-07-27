@@ -55,6 +55,16 @@ class MotionCheck:
     #: second of travel.
     WINDOW_S = 0.4
 
+    #: how far back the comparison frame is taken from. THIS is what separates
+    #: driving from shaking, and getting it wrong produced a false "SE MOVIO" on
+    #: a car that never left its parking spot: consecutive frames differ just as
+    #: much when the chassis vibrates under motor current as when the vehicle
+    #: translates, so a frame-to-frame difference reports motion for a motor that
+    #: is only buzzing. Against a frame from a second ago the two are nothing
+    #: alike -- 0.3 m/s moves the scene 30 cm, while vibration returns to exactly
+    #: where it started.
+    LOOKBACK_S = 1.0
+
     def __init__(self, factor: float = FACTOR, floor: float = FLOOR,
                  window_s: float = WINDOW_S):
         self._factor = factor
@@ -62,6 +72,7 @@ class MotionCheck:
         self._window_s = window_s
 
         self._prev: Optional[np.ndarray] = None
+        self._ref: deque[tuple[float, np.ndarray]] = deque()
         self._hist: deque[tuple[float, float]] = deque()
         self._cal: list[float] = []
         self._baseline: Optional[float] = None
@@ -107,16 +118,26 @@ class MotionCheck:
     def reset(self) -> None:
         """Forget the rolling history, keeping the calibrated baseline."""
         self._hist.clear()
+        self._ref.clear()
         self._prev = None
 
     # -- internals ---------------------------------------------------------
 
     def _diff(self, frame: Optional[np.ndarray]) -> Optional[float]:
+        """Difference against a frame LOOKBACK_S old, not the previous one."""
         if frame is None:
             return None
         small = cv2.resize(frame, self.SMALL, interpolation=cv2.INTER_AREA)
         gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY).astype(np.float32)
-        prev, self._prev = self._prev, gray
-        if prev is None:
-            return None
-        return float(np.mean(np.abs(gray - prev)))
+
+        now = time.monotonic()
+        self._ref.append((now, gray))
+        # keep just enough history to always have one frame at least
+        # LOOKBACK_S old available
+        while len(self._ref) > 2 and now - self._ref[1][0] >= self.LOOKBACK_S:
+            self._ref.popleft()
+
+        ref_t, ref = self._ref[0]
+        if now - ref_t < self.LOOKBACK_S * 0.5:
+            return None            # not enough history yet to judge
+        return float(np.mean(np.abs(gray - ref)))
