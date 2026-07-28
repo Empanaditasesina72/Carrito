@@ -320,7 +320,20 @@ LANE_MIN_CONFIDENCE = 0.20
 # Confirm the separation is IN BAND and the mask is not degenerate FIRST -- a
 # calibration taken during a partial or mis-paired lock is simply wrong (see the
 # 327 px vs 385 px note above). A correct value now reads ~0.0 settled.
-LANE_ERROR_OFFSET_PX = 23.1
+# RETRACTED 2026-07-28, same day: 23.1 was measured against FURNITURE, not lines.
+# /tmp/diag/2_bev.png from the run that produced it shows the bird's-eye view
+# filled with a doorway, a wall and a wooden bench -- no road at all. The camera
+# is aimed roughly LEVEL, while this file assumes CAMERA_TILT_DEG = 10 down, so
+# the BEV's top edge (row 264 of 480) samples the horizon instead of ~1 m ahead.
+# The sliding windows then locked on bright vertical edges of the room, which is
+# why three runs "found both lines" at 100 % confidence with separations of 184,
+# 316 and 386 px -- three different pairs of furniture.
+#
+# Fix the camera aim first, then re-measure. Do NOT compensate in software: the
+# lens geometry in the paper (blind distance, rows the octagon occupies) all
+# assumes 22 cm and 10 deg, and patching the trapezoid would bake the
+# misalignment into the numbers being published.
+LANE_ERROR_OFFSET_PX = 0.0
 
 STOP_BRAKE_START_MM  = 700
 STOP_TARGET_MM       = 270
