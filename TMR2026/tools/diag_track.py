@@ -36,7 +36,7 @@ import numpy as np
 from config import (
     CAMERA_WIDTH, CAMERA_HEIGHT, CAMERA_FPS,
     USE_IMX500_NPU, IMX500_RPK_PATH, IMX500_LABELS_PATH, IMX500_CONF,
-    LANE_RIGHT_BIAS,
+    LANE_RIGHT_BIAS, LANE_WIDTH_M, LANE_DRIVEN_WIDTH_M,
 )
 from vision.lane_pipeline import LanePipeline
 
@@ -196,10 +196,29 @@ def main() -> int:
     print(f"  both lines found  : {both}/{len(results)} frames")
     print(f"  frames with signs : {best}/{len(results)}")
     if seps:
-        print(f"  line separation   : mean {np.mean(seps):.0f} px "
-              f"(pipeline expects 384 px, accepts 230-538)")
-        if not (230 <= np.mean(seps) <= 538):
-            print("  => OUT OF BAND: the pipeline will drop to single-line mode.")
+        # The pipeline accepts EITHER pair (see LanePipeline._lane_centres):
+        #   the full carriageway, always 384 px by construction, or the driven
+        #   lane at 384 * DRIVEN/TOTAL. Checking only the wide one reported
+        #   "OUT OF BAND -- will drop to single-line mode" for a run that was in
+        #   fact locked on the driven-lane pair at 100 % confidence in 20/20
+        #   frames, which is exactly what a two-line track is supposed to give.
+        TOL = 0.40
+        road_px = 384.0
+        lane_px = 384.0 * LANE_DRIVEN_WIDTH_M / LANE_WIDTH_M
+        sep = float(np.mean(seps))
+        on_road = abs(sep / road_px - 1.0) <= TOL
+        on_lane = abs(sep / lane_px - 1.0) <= TOL
+        which = ("full carriageway" if on_road else
+                 "driven lane" if on_lane else None)
+        print(f"  line separation   : mean {sep:.0f} px  "
+              f"(carriageway {road_px:.0f}, driven lane {lane_px:.0f}, "
+              f"+/-{TOL:.0%})")
+        if which:
+            print(f"  => IN BAND on the {which} pair.")
+        else:
+            print("  => OUT OF BAND on BOTH pairs: the pipeline will drop to")
+            print("     single-line mode. Check LANE_DRIVEN_WIDTH_M against a")
+            print("     tape measure before trusting anything below.")
     fill = None
     if last is not None and last[1].mask_frame is not None:
         mk = last[1].mask_frame

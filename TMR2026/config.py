@@ -299,18 +299,28 @@ LANE_MIN_CONFIDENCE = 0.20
 # rule at LANE_RIGHT_BIAS=0.74. The previous 28.5 was taken with the target at
 # the centre of the whole ROAD (bias 0.50), which is a different physical place,
 # so it no longer applied. Settled reading was +30.0 px on top of that 28.5.
-# ZEROED 2026-07-28 for the city track. 58.5 was measured on the 3.46 m track,
-# and it cannot survive this one: the road went 56.5 -> 66.0 cm, so
-# BEV_SCALE_PX_PER_CM went 6.80 -> 5.82 px/cm AND the driven lane went 29 -> 31 cm,
-# which moves the target rule as well. Carrying the old constant over would hold
-# the car deliberately off centre.
+# Re-measured on the city track 2026-07-28. 58.5 was the 3.46 m track's value and
+# could not survive this one (road 56.5 -> 66.0 cm, driven lane 29 -> 31 cm).
+#
+# The run that produced this still had 58.5 loaded and reported a SETTLED
+# -35.4 px with the car centred by hand, so the raw standing bias is
+#     58.5 - 35.4 = 23.1 px
+# Taken from the settled value, not the printed mean of -33.3: the EMA starts at
+# -16.1 and converges over ~8 frames, so the mean is contaminated by its own
+# transient. Frames 7-19 all read -35.0..-35.7.
+#
+# That reading transfers even though it was taken under the OLD constants,
+# because both lines were found in 20/20 frames and the separation (184 px) put
+# BOTH configurations on the same branch -- the driven-lane pair, which aims at
+# the measured midpoint with a hard-coded 0.5. Neither LANE_RIGHT_BIAS nor
+# lane_px enters that path, so nothing stale leaked into the number.
 #
 # TO RE-MEASURE: centre the car in the RIGHT lane by hand, then
 #     python tools/diag_track.py --frames 20
-# Check `line separation` is in band and the mask is not degenerate FIRST -- a
+# Confirm the separation is IN BAND and the mask is not degenerate FIRST -- a
 # calibration taken during a partial or mis-paired lock is simply wrong (see the
-# 327 px vs 385 px note above). Then paste the reported mean error_px here.
-LANE_ERROR_OFFSET_PX = 0.0
+# 327 px vs 385 px note above). A correct value now reads ~0.0 settled.
+LANE_ERROR_OFFSET_PX = 23.1
 
 STOP_BRAKE_START_MM  = 700
 STOP_TARGET_MM       = 270
