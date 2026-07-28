@@ -138,7 +138,14 @@ class AutonomousFSM:
     # Coasting closes that gap by dead reckoning over the blind stretch. At the
     # measured 15 cm/s (20 % duty advanced 20.8 cm in 1.4 s), 0.6 s is ~9 cm,
     # taking the mean from 387 to roughly 300 mm. Set 0.0 to brake immediately.
-    SIGN_LOST_COAST_S = 0.6
+    #
+    # CUT 0.6 -> 0.15 on 2026-07-28 for the city track, where the sign was moved
+    # against the lane edge. Post centre is now ~20 cm off the camera axis, not
+    # 28, so with tan(HFOV/2) = 320/490 the octagon centre only leaves the frame
+    # at 0.20 * 1.531 = 306 mm -- past the 320 mm gate. The blind stretch shrank
+    # from ~13 cm to ~3.6 cm, and 0.6 s would now dead-reckon ~13 cm straight
+    # INTO the sign. 0.15 s is that 3.6 cm at the PRECAUCION speed.
+    SIGN_LOST_COAST_S = 0.15
 
     def __init__(self, motor, steering, pid, signals=None, brake_light=None):
         """

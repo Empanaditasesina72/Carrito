@@ -145,11 +145,21 @@ CAMERA_TILT_DEG = 10.0
 
 MAX_STEERING_ANGLE_DEG = 35.0
 
-ROAD_TOTAL_LENGTH_M    = 3.46
-ROAD_LEFT_TO_DASHED_M  = 0.275
-ROAD_DASHED_TO_RIGHT_M = 0.290
-ROAD_STOP_SIGN_AT_M    = 1.50
-ROAD_PARKING_GAP_M     = 0.290
+# City track, tape-measured 2026-07-28. This REPLACES the 3.46 m track the
+# earlier numbers came from; nothing geometric here is inherited.
+#
+# Two lines, not three: white tape on the RIGHT edge and a dashed centre. The
+# opposite lane has no tape -- its edge is the mat against the tile floor. That
+# is fine, because with the car correctly inside the right lane the pipeline
+# already prefers the `dashed <-> right solid` pair (see LANE_DRIVEN_WIDTH_M).
+#
+# Display only (tools/track_geometry.py); NOT tape-measured. The sign was
+# measured at 1.50 m from the start line and the mat ends just past it.
+ROAD_TOTAL_LENGTH_M    = 1.60
+ROAD_LEFT_TO_DASHED_M  = 0.35    # dashed centre -> unpainted mat edge
+ROAD_DASHED_TO_RIGHT_M = 0.31    # dashed centre -> inner edge of the white tape
+ROAD_STOP_SIGN_AT_M    = 1.50    # start line -> sign post (unchanged by luck)
+ROAD_PARKING_GAP_M     = 0.290   # stale: parking cannot run, reverse is dead
 
 LANE_WIDTH_M = ROAD_LEFT_TO_DASHED_M + ROAD_DASHED_TO_RIGHT_M
 
@@ -176,22 +186,23 @@ STEER_KP = 0.08
 STEER_KI = 0.0
 STEER_KD = 0.0
 
-# Where in the lane the car should sit, as a fraction from the LEFT solid line
-# across the full road width. The road is 27.5 cm (left->dashed) + 29.0 cm
-# (dashed->right) = 56.5 cm, so the centre of the RIGHT lane is at
-#     (0.275 + 0.290/2) / 0.565 = 0.74
-# 0.50 would centre the car on the dashed line itself -- which is what
-# track_calib.json was doing.
-LANE_RIGHT_BIAS = 0.74
+# Where in the lane the car should sit, as a fraction from the far (unpainted)
+# edge across the full road width. The road is 35.0 cm + 31.0 cm = 66.0 cm, so
+# the centre of the RIGHT lane is at
+#     (0.35 + 0.31/2) / 0.66 = 0.765
+# On the city track this is nearly moot: with only two lines the wide pair is
+# never found, and the driven-lane pair aims at a hard-coded 0.50. Kept correct
+# so the outer-pair branch stays right if a left line is ever taped down.
+LANE_RIGHT_BIAS = 0.765
 
-# Width of the lane the car actually drives in (dashed centre -> right solid).
-# The road has THREE lines, so the sliding windows return one of two pairs:
-#   left solid <-> right solid  = 0.565 m -> 384 px, aim at LANE_RIGHT_BIAS
-#   dashed     <-> right solid  = 0.290 m -> 197 px, aim at 50 %
-# Both put the car in the same physical place and agree to 1.5 px. Recognising
-# only the wide pair loses the dashed line entirely, because a car correctly
-# inside the right lane puts the LEFT SOLID at BEV x~35 -- outside the window.
-LANE_DRIVEN_WIDTH_M = 0.290
+# Width of the lane the car actually drives in (dashed centre -> right tape).
+# The sliding windows return one of two pairs:
+#   far edge <-> right tape  = 0.660 m -> 384 px, aim at LANE_RIGHT_BIAS
+#   dashed   <-> right tape  = 0.310 m -> 180 px, aim at 50 %
+# The city track has NO tape on the far edge, so in practice only the 180 px
+# pair appears -- which is the one the car needs anyway: a vehicle correctly
+# inside the right lane puts the far edge outside the BEV window regardless.
+LANE_DRIVEN_WIDTH_M = 0.31
 
 # Pure-pursuit lookahead, as a fraction of the bird's-eye view height measured
 # from the bottom. 0.70 aims near the far end of the view (~0.8 m ahead), which
@@ -288,7 +299,18 @@ LANE_MIN_CONFIDENCE = 0.20
 # rule at LANE_RIGHT_BIAS=0.74. The previous 28.5 was taken with the target at
 # the centre of the whole ROAD (bias 0.50), which is a different physical place,
 # so it no longer applied. Settled reading was +30.0 px on top of that 28.5.
-LANE_ERROR_OFFSET_PX = 58.5
+# ZEROED 2026-07-28 for the city track. 58.5 was measured on the 3.46 m track,
+# and it cannot survive this one: the road went 56.5 -> 66.0 cm, so
+# BEV_SCALE_PX_PER_CM went 6.80 -> 5.82 px/cm AND the driven lane went 29 -> 31 cm,
+# which moves the target rule as well. Carrying the old constant over would hold
+# the car deliberately off centre.
+#
+# TO RE-MEASURE: centre the car in the RIGHT lane by hand, then
+#     python tools/diag_track.py --frames 20
+# Check `line separation` is in band and the mask is not degenerate FIRST -- a
+# calibration taken during a partial or mis-paired lock is simply wrong (see the
+# 327 px vs 385 px note above). Then paste the reported mean error_px here.
+LANE_ERROR_OFFSET_PX = 0.0
 
 STOP_BRAKE_START_MM  = 700
 STOP_TARGET_MM       = 270
@@ -296,8 +318,15 @@ STOP_TOLERANCE_MM    = 30
 STOP_WAIT_SEC        = 5.0
 STOP_LED_BLINK_HZ    = 2.0
 
-STOP_SIGN_REAL_HEIGHT_M  = 0.085
-STOP_SIGN_TOTAL_HEIGHT_M = 0.175
+# Measured on the city track's sign 2026-07-28: the octagon is 9.0 cm across the
+# flats, not 8.5. This feeds the pinhole distance directly, so the old value was
+# reporting every sign 5.9 % CLOSER than it was (d = h_real*f/h_px), which made
+# the brake gate fire ~19 mm early. Re-measure after any change of sign.
+STOP_SIGN_REAL_HEIGHT_M  = 0.09
+# Post height under the octagon is estimated from the photographs (~6 cm), not
+# taped. Only tools/track_geometry.py reads this, for the "leaves the bottom of
+# the frame" figure -- it is not in the control path.
+STOP_SIGN_TOTAL_HEIGHT_M = 0.15
 CAMERA_FOCAL_LENGTH_PX   = 490.0
 
 EMERGENCY_STOP_MM = 120
