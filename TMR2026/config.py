@@ -354,7 +354,13 @@ LANE_MIN_CONFIDENCE = 0.20
 # lens geometry in the paper (blind distance, rows the octagon occupies) all
 # assumes 22 cm and 10 deg, and patching the trapezoid would bake the
 # misalignment into the numbers being published.
-LANE_ERROR_OFFSET_PX = 0.0
+#
+# RE-MEASURED after the camera was tilted down, with LANE_RIGHT_BIAS at 0.50:
+# +8.5 px settled, std 1.1, 100 % confidence, both lines in 20/20 frames. This
+# one is on real lines -- checked against the mask's own column bands, which put
+# left_x=151 inside the dashed run (132-169) and right_x=510 inside the tape
+# (482-512).
+LANE_ERROR_OFFSET_PX = 8.5
 
 STOP_BRAKE_START_MM  = 700
 STOP_TARGET_MM       = 270
