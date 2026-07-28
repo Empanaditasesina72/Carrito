@@ -2,64 +2,116 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Current focus & roadmap (updated 2026-07-27 — read this first when resuming)
+## Current focus & roadmap (updated 2026-07-28 — read this first when resuming)
 
 **Goal:** the car drives itself down the right lane, stops at the STOP sign, and
-the paper gets its P2 braking row. Sign detection and steering both run on the Pi
-CPU (`USE_IMX500_NPU=False`).
+the paper gets its P2 braking row (N=10). Sign detection and steering both run on
+the Pi CPU (`USE_IMX500_NPU=False`).
 
-### IT DRIVES. Two autonomous runs completed 2026-07-27:
+**The vehicle moved to a NEW track**, in the city apartment. Everything geometric
+from the 3.46 m track is gone. Photos of it: `Pictures/Car3` and `Car4` (their DSC
+numbers repeat across folders but the files differ — never mix them).
+
+### THE BRAKE GATE FIRED. 2026-07-28, first time ever:
 
 ```
-[FASE 1] CARRIL                      lane following, closed loop
-[FSM] Sign lost at 412mm -> braking (arrived)
-[FASE 2] ALTO en t=4.2 s             braked, held 5.00 s exactly
-[FSM] ESPERA complete -> REANUDAR    pulled away again
+[FSM] Braking (camera 313mm)
+[FSM] Braking (camera 261mm)
 ```
-Lane error at the end −11.5 px (−1.7 cm), weave 0.1–0.7 px, confidence 99–100 %.
-Stopping distances **362 and 412 mm** against a 270 mm setpoint.
 
-Run it with `python tools/demo_full.py --no-park --cruise 30 --kick 70`.
+`SIGN_BBOX_STOP_MM` had **never** been reachable before — the section this
+replaces said flatly that it "can never fire". Moving the sign against the lane
+edge is what did it: the post went from ~28 cm off the camera axis to ~20 cm, so
+with `tan(HFOV/2) = 320/490` the octagon's centre now stays in frame to ~306 mm,
+past the 320 mm gate. Stops are decided by the threshold now, not by whatever
+distance the sign happened to vanish at.
 
-### BLOCKED ON HARDWARE (do not re-diagnose in software)
+`SIGN_LOST_COAST_S` was cut 0.6 → **0.15** for the same reason: the blind stretch
+shrank from ~13 cm to ~3.6 cm and 0.6 s would dead-reckon straight into the sign.
 
-| What | Evidence |
+### City track, tape-measured 2026-07-28
+
+Two lines, not three: white tape on the RIGHT edge, dashed centre, and an
+**unpainted far edge** (mat against bright tile).
+
+| | |
 |---|---|
-| **Motor battery flat**, no charger on site (2026-07-27 night) | — |
-| **REVERSE IS DEAD** — LPWM leg of the IBT-2 does not conduct | Three independent methods: sign distance identical at 6 duties (36.5 cm every time); lane line positions dL/dR/dSep all +0.0; whole-frame difference 0.30–0.34 (noise floor) at 40/60/80/95 %. Forward at **20 %** moves 20 cm. |
+| Carriageway | 66.0 cm = 35.0 (far→dashed) + 31.0 (dashed→tape) |
+| Start line → sign post | 150 cm |
+| Octagon | 9.0 cm across the flats (was 8.5 — the pinhole under-read every distance by 5.9 %) |
+| Sign post off the camera axis | ~20 cm (base 7.4 cm, sitting against the tape) |
+| Detection | **86 % at 33 cm**, 71–78 % at 158 cm |
 
-Reverse being dead means **`ParkingFSM` cannot execute** (it reverses into the bay)
-and the car cannot return itself to a start line — reposition it by hand between
-runs.
+### Open blockers (2026-07-28 night, work stopped here)
 
-### Calibration, all measured on the car (not inherited from the simulator)
+1. **The car stalls.** `estancado -- reintentando arranque` fires repeatedly, once
+   for 12 s straight. `--cruise 35` gives PRECAUCION 29.75 % in `demo_full`, and it
+   still stalls. Suspect the battery again, or the felt mat's rolling resistance.
+   **This is what blocks the 10 trials** — a stalled trial is a `max_drive` row and
+   does not count.
+2. **Lane error walks to +60…+120 px (9–18 cm)** during the later phases, with
+   confidence dropping to 50 % (RIGHT only). The car is losing the dashed line and
+   drifting. Weave 18.3 px on the second pilot.
+3. `STEER_KP = 0.08` was sized for **6.8 px/cm**; the BEV now measures ~**11.6
+   px/cm**, so effective loop gain is ~1.7× the design. If it weaves, try 0.05.
+   (The scale moved because the camera was re-aimed — see below.)
+
+### Calibration, all measured on the car
 
 | Parameter | Value | How it was found |
 |---|---|---|
-| `SERVO_TRIM_DEG` | **−7.5** | Closed-loop: the servo's steady-state deviation from centre IS the mechanical bias. One run per estimate; residual went +3.97° → +0.58°. |
-| `LANE_ERROR_OFFSET_PX` | **58.5** | Car centred in the right lane by hand; reads +0.1 px there. |
-| `LANE_RIGHT_BIAS` | **0.74** | (0.275 + 0.290/2)/0.565 = centre of the right lane. |
-| `LANE_AIM_WINDOW_FRAC` | **0.70** | Pure-pursuit lookahead (~0.8 m), which `STEER_KP=0.08` is already sized for. |
-| `STEER_KP/KI/KD` | **0.08 / 0 / 0** | Ki=0 because trim removes the standing bias; Kd=0 because the lookahead damps. |
-| `MOTOR_MIN_MOVE_PWM` | **20.0** | Sign-distance sweep unladen: 20 % → +20.8 cm in 1.4 s. |
+| `SERVO_TRIM_DEG` | **−7.5** | Closed-loop; residual went +3.97° → +0.58°. Unchanged by the move. |
+| `LANE_ERROR_OFFSET_PX` | **8.5** | Car centred by hand, `diag_track`: +8.5 px settled, std 1.1. Verified against the mask's own column bands — this one is on painted lines. |
+| `LANE_RIGHT_BIAS` | **0.50** | NOT 0.765. See below: the pair classifier mislabels the driven lane as the carriageway, and 0.50 is right under either branch on a two-line track. |
+| `LANE_DRIVEN_WIDTH_M` | **0.31** | Tape measure. |
+| `STEER_KP/KI/KD` | **0.08 / 0 / 0** | See blocker 3 — may need 0.05 here. |
+| `MOTOR_MIN_MOVE_PWM` | **20.0** | Unladen: 20 % → +20.8 cm in 1.4 s. |
 
-**Weight matters more than duty.** With a spare battery riding on the chassis the
-car would not move at **95 %**; unladen it moves at **20 %**. Every "the motor has
-no torque" conclusion earlier that day was measured under that load and was wrong
-about the cause. Keep the chassis light.
+**Weight matters more than duty.** With a spare battery on the chassis the car
+would not move at **95 %**; unladen it moves at **20 %**. Keep the chassis light.
 
-### The braking distance is limited by the LENS, not by a threshold
+### Two traps this track set, both already paid for
 
-`SIGN_BBOX_STOP_MM = 320` **can never fire**. The sign sits ~28 cm off the camera
-axis and the lens covers ~±33°, so it leaves the frame at
+**The camera was aimed level, not 10° down.** For hours the BEV contained a
+doorway, a wall and a bench — no road at all — while `diag_track` reported "both
+lines found, 100 % confidence" in 20/20 frames. Three runs gave separations of
+184, 316 and 386 px: three different pairs of *furniture*, held rock-steady
+because a static scene produces a static error. A calibration measured from it
+(58.5 → 23.1) was the offset between two pieces of furniture. **Always look at
+`/tmp/diag/2_bev.png` before believing any confidence number.**
 
-    d = 0.28 / tan(33°) ≈ 43 cm
+**`BEV_SCALE_PX_PER_CM` is defined, not measured.** `384 / (LANE_WIDTH_M * 100)`
+merely asserts the carriageway fills the destination window. That was verified at
+56.5 cm and silently became false at 66 cm — the homography is a fixed trapezoid
+in frame coordinates and knows nothing about road width. The result is a
+misclassification, not a rounding error: a real 275 px lane reads 53 % wide for
+`lane_px` (rejected) and 28 % narrow for `road_px` (accepted), so the pipeline
+applied `LANE_RIGHT_BIAS` *across the driven lane* and aimed 8 cm off centre every
+frame. Hence bias 0.50.
 
-The car is blind to the sign before it can ever get that close, so every stop is
-decided by `SIGN_LOST_NEAR_MM` at whatever distance the sign happened to vanish —
-hence 362 and 412 mm. `SIGN_LOST_COAST_S = 0.6` now dead-reckons across the blind
-stretch (~9 cm at the measured 15 cm/s). **Moving the sign closer to the lane edge
-is the physical fix**: it stays in frame longer and the stop tightens toward 270.
+**A "the line must lie on the road" mask gate was tested and rejected**, on the
+real BEV: the background under the three parasitic bands measured 41/41/49 against
+36/44 for the dashed line and the tape. They are narrow bright strips along the
+bench's pale base — geometrically identical to a lane line, and brightness does
+not separate them either (187 dashed vs 172 parasite). The fix is physical: dark
+tape over the bench base.
+
+### Also blocked on hardware (do not re-diagnose in software)
+
+**REVERSE IS DEAD** — the LPWM leg of the IBT-2 does not conduct. Three
+independent methods: sign distance identical at 6 duties (36.5 cm every time);
+lane line positions dL/dR/dSep all +0.0; whole-frame difference at the noise floor
+at 40/60/80/95 %. Forward at **20 %** moves 20 cm. So **`ParkingFSM` cannot
+execute** and the car cannot return itself to a start line — reposition by hand.
+
+### Pi access, 2026-07-28
+
+`ssh angel01@100.68.26.120` (Tailscale; the 192.168.x addresses are stale). The
+Pi's repo had **no remotes** — it only ever received pushes from the PC — so
+`git pull origin main` failed for a while. `origin` is now added and the PC's `pi`
+remote points at the Tailscale address; both paths work. `ncnn` is NOT installed
+(PEP 668), so the detector runs the slower PyTorch path: `pip install
+--break-system-packages ncnn` fixes it.
 
 ### Paper status — WITCOM 2026 / Springer CCIS, paper 2069
 
