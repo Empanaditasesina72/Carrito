@@ -193,7 +193,28 @@ STEER_KD = 0.0
 # On the city track this is nearly moot: with only two lines the wide pair is
 # never found, and the driven-lane pair aims at a hard-coded 0.50. Kept correct
 # so the outer-pair branch stays right if a left line is ever taped down.
-LANE_RIGHT_BIAS = 0.765
+# 0.50 ON THIS TRACK, not 0.765. Measured 2026-07-28 with the camera finally
+# aimed at the road: the dashed centre lands at BEV x=185 and the right tape at
+# x=460, a separation of 275 px for a lane that is 31 cm wide. That is 8.9 px/cm,
+# where BEV_SCALE_PX_PER_CM claims 384/66 = 5.82.
+#
+# The scale is DEFINED, not measured: `384 / (LANE_WIDTH_M * 100)` simply asserts
+# that the carriageway fills the destination window. That was verified on the
+# 56.5 cm track and quietly stopped being true at 66 cm, because the homography
+# is a fixed trapezoid in frame coordinates and knows nothing about road width.
+#
+# The consequence is a misclassification, not a rounding error: lane_px comes out
+# 180 and road_px 384, so a real 275 px lane reads as 28 % narrow for the
+# carriageway (inside the +/-40 % window) and 53 % wide for the lane (outside
+# it). The pipeline then aims at 0.765 ACROSS THE DRIVEN LANE instead of across
+# the road -- 8 cm right of centre, every frame, which is the +74 px this reads.
+#
+# 0.50 is correct under either branch here, because the only pair this track can
+# produce is dashed <-> right tape and the car belongs in the middle of it. The
+# carriageway pair cannot even form: 66 cm at the true scale is ~585 px against a
+# 460 px valid window, so the far edge is outside the view whenever the car is
+# actually in its lane.
+LANE_RIGHT_BIAS = 0.50
 
 # Width of the lane the car actually drives in (dashed centre -> right tape).
 # The sliding windows return one of two pairs:
