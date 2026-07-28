@@ -164,9 +164,16 @@ def run_trial(fsm, camera, sign_det, sensor, cruise_pwm, max_drive_s,
                                 if closest and closest.distance_m else None)
         fsm.update(dt)
 
-        # Only while cruising: if the FSM has already moved to braking, its
-        # brake() must never be overridden by a late kick tick.
-        if now < kick_until and fsm.state == FSMState.CRUCERO:
+        # Never once braking has begun: brake() is an instantaneous hard-cut and
+        # a late kick tick must not override it. But CRUCERO alone was too
+        # strict. On a short track the sign is already in frame at the start
+        # line, so the FSM enters PRECAUCION on the very first tick and the kick
+        # never fired at all -- leaving the car to break static friction on
+        # PRECAUCION_PWM alone, which is a floor sized to SUSTAIN motion, not to
+        # start it. PRECAUCION still drives (set_speed), so kicking through it is
+        # safe and keeps the kick time-bounded by kick_until either way.
+        if now < kick_until and fsm.state in (FSMState.CRUCERO,
+                                              FSMState.PRECAUCION):
             fsm.motor.kick(kick_pwm, 0.0)
 
         if fsm.state in (FSMState.ESPERA,):       # the controller has stopped
